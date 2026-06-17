@@ -1,0 +1,13 @@
+/target
+.DS_Store
+
+# Live saved state now lives in the OS config dir, not the repo.
+# These are leftover/local-only and should never be committed.
+/data/save.json
+/data/settings.json
+/data/groups.json
+
+# Generator scratch / large inputs — not needed to run the app.
+/data/FWC26_regulations_AnnexC.pdf
+/data/annex_c_extracted.txt
+/data/match_occurrences.txt

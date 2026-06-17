@@ -1,0 +1,74 @@
+[
+  { "group": "A", "third_place_status": "Unknown", "teams": [
+    { "name": "Mexico", "code": "MEX" },
+    { "name": "South Korea", "code": "KOR" },
+    { "name": "Czechia", "code": "CZE" },
+    { "name": "South Africa", "code": "RSA" }
+  ]},
+  { "group": "B", "third_place_status": "Unknown", "teams": [
+    { "name": "Switzerland", "code": "SUI" },
+    { "name": "Canada", "code": "CAN" },
+    { "name": "Qatar", "code": "QAT" },
+    { "name": "Bosnia-Herzegovina", "code": "BIH" }
+  ]},
+  { "group": "C", "third_place_status": "Unknown", "teams": [
+    { "name": "Scotland", "code": "SCO" },
+    { "name": "Morocco", "code": "MAR" },
+    { "name": "Brazil", "code": "BRA" },
+    { "name": "Haiti", "code": "HAI" }
+  ]},
+  { "group": "D", "third_place_status": "Unknown", "teams": [
+    { "name": "United States", "code": "USA" },
+    { "name": "Australia", "code": "AUS" },
+    { "name": "Türkiye", "code": "TUR" },
+    { "name": "Paraguay", "code": "PAR" }
+  ]},
+  { "group": "E", "third_place_status": "Unknown", "teams": [
+    { "name": "Germany", "code": "GER" },
+    { "name": "Ivory Coast", "code": "CIV" },
+    { "name": "Ecuador", "code": "ECU" },
+    { "name": "Curaçao", "code": "CUW" }
+  ]},
+  { "group": "F", "third_place_status": "Unknown", "teams": [
+    { "name": "Sweden", "code": "SWE" },
+    { "name": "Japan", "code": "JPN" },
+    { "name": "Netherlands", "code": "NED" },
+    { "name": "Tunisia", "code": "TUN" }
+  ]},
+  { "group": "G", "third_place_status": "Unknown", "teams": [
+    { "name": "New Zealand", "code": "NZL" },
+    { "name": "Iran", "code": "IRN" },
+    { "name": "Belgium", "code": "BEL" },
+    { "name": "Egypt", "code": "EGY" }
+  ]},
+  { "group": "H", "third_place_status": "Unknown", "teams": [
+    { "name": "Uruguay", "code": "URU" },
+    { "name": "Saudi Arabia", "code": "KSA" },
+    { "name": "Spain", "code": "ESP" },
+    { "name": "Cape Verde", "code": "CPV" }
+  ]},
+  { "group": "I", "third_place_status": "Unknown", "teams": [
+    { "name": "Norway", "code": "NOR" },
+    { "name": "France", "code": "FRA" },
+    { "name": "Senegal", "code": "SEN" },
+    { "name": "Iraq", "code": "IRQ" }
+  ]},
+  { "group": "J", "third_place_status": "Unknown", "teams": [
+    { "name": "Argentina", "code": "ARG" },
+    { "name": "Austria", "code": "AUT" },
+    { "name": "Jordan", "code": "JOR" },
+    { "name": "Algeria", "code": "ALG" }
+  ]},
+  { "group": "K", "third_place_status": "Unknown", "teams": [
+    { "name": "Congo DR", "code": "COD" },
+    { "name": "Portugal", "code": "POR" },
+    { "name": "Colombia", "code": "COL" },
+    { "name": "Uzbekistan", "code": "UZB" }
+  ]},
+  { "group": "L", "third_place_status": "Unknown", "teams": [
+    { "name": "Croatia", "code": "CRO" },
+    { "name": "England", "code": "ENG" },
+    { "name": "Ghana", "code": "GHA" },
+    { "name": "Panama", "code": "PAN" }
+  ]}
+]

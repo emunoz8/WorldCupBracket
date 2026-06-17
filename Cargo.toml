@@ -1,0 +1,27 @@
+[package]
+name = "fifa-bracket-predictor"
+version = "0.1.0"
+edition = "2024"
+description = "Desktop app for building the FIFA World Cup 2026 knockout bracket."
+authors = ["Edwin"]
+license = "MIT"
+readme = "README.md"
+exclude = [
+    "data/FWC26_regulations_AnnexC.pdf",
+    "data/annex_c_extracted.txt",
+    "data/match_occurrences.txt",
+]
+
+[lib]
+name = "fifa_team3"
+
+[dependencies]
+dirs = "6.0.0"
+eframe = "0.31"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

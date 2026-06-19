@@ -66,6 +66,10 @@ impl ThirdPlaceStatus {
 pub struct Team {
     pub name: String,
     pub code: String,
+    /// Flag emoji (regional-indicator pair). Renders in the printed HTML; egui's
+    /// default font cannot draw flag glyphs, so it is unused on screen.
+    #[serde(default)]
+    pub flag: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -73,6 +77,10 @@ pub struct GroupState {
     pub group: char,
     pub teams: Vec<Team>,
     pub third_place_status: ThirdPlaceStatus,
+    /// True once the final group standings are known for certain. Drives whether
+    /// this group's teams appear solid (vs shaded) in the bracket.
+    #[serde(default)]
+    pub completed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -195,6 +203,47 @@ pub struct KoMatch {
     pub right: Slot,
 }
 
+/// Venue for a knockout match: (stadium, state/region, country). Source: the
+/// official 2026 FIFA World Cup knockout schedule (matches 73–104).
+#[rustfmt::skip]
+pub fn match_venue(match_number: usize) -> Option<(&'static str, &'static str, &'static str)> {
+    Some(match match_number {
+        73 => ("SoFi Stadium", "California", "USA"),
+        74 => ("Gillette Stadium", "Massachusetts", "USA"),
+        75 => ("Estadio BBVA", "Nuevo León", "Mexico"),
+        76 => ("NRG Stadium", "Texas", "USA"),
+        77 => ("MetLife Stadium", "New Jersey", "USA"),
+        78 => ("AT&T Stadium", "Texas", "USA"),
+        79 => ("Estadio Azteca", "Mexico City", "Mexico"),
+        80 => ("Mercedes-Benz Stadium", "Georgia", "USA"),
+        81 => ("Levi's Stadium", "California", "USA"),
+        82 => ("Lumen Field", "Washington", "USA"),
+        83 => ("BMO Field", "Ontario", "Canada"),
+        84 => ("SoFi Stadium", "California", "USA"),
+        85 => ("BC Place", "British Columbia", "Canada"),
+        86 => ("Hard Rock Stadium", "Florida", "USA"),
+        87 => ("Arrowhead Stadium", "Missouri", "USA"),
+        88 => ("AT&T Stadium", "Texas", "USA"),
+        89 => ("Lincoln Financial Field", "Pennsylvania", "USA"),
+        90 => ("NRG Stadium", "Texas", "USA"),
+        91 => ("MetLife Stadium", "New Jersey", "USA"),
+        92 => ("Estadio Azteca", "Mexico City", "Mexico"),
+        93 => ("AT&T Stadium", "Texas", "USA"),
+        94 => ("Lumen Field", "Washington", "USA"),
+        95 => ("Mercedes-Benz Stadium", "Georgia", "USA"),
+        96 => ("BC Place", "British Columbia", "Canada"),
+        97 => ("Gillette Stadium", "Massachusetts", "USA"),
+        98 => ("SoFi Stadium", "California", "USA"),
+        99 => ("Hard Rock Stadium", "Florida", "USA"),
+        100 => ("Arrowhead Stadium", "Missouri", "USA"),
+        101 => ("AT&T Stadium", "Texas", "USA"),
+        102 => ("Mercedes-Benz Stadium", "Georgia", "USA"),
+        103 => ("Hard Rock Stadium", "Florida", "USA"),
+        104 => ("MetLife Stadium", "New Jersey", "USA"),
+        _ => return None,
+    })
+}
+
 /// Build the full knockout tree (R32 → Final) with each match wired to its feeders.
 pub fn knockout_matches() -> Vec<KoMatch> {
     let mut matches: Vec<KoMatch> = ROUND_OF_32_MATCHES
@@ -282,17 +331,40 @@ pub fn annex_filters_from_groups(groups: &[GroupState]) -> (String, String) {
     (normalize_groups(&passing), normalize_groups(&eliminated))
 }
 
-pub fn default_group_states() -> Vec<GroupState> {
+/// The official 2026 group draw: (group, team name, 3-letter code, flag emoji).
+/// Flags render in the printed HTML; egui's font cannot draw them on screen.
+#[rustfmt::skip]
+pub const SEED_TEAMS: [(char, &str, &str, &str); 48] = [
+    ('A', "Mexico", "MEX", "🇲🇽"), ('A', "South Korea", "KOR", "🇰🇷"), ('A', "Czechia", "CZE", "🇨🇿"), ('A', "South Africa", "RSA", "🇿🇦"),
+    ('B', "Switzerland", "SUI", "🇨🇭"), ('B', "Canada", "CAN", "🇨🇦"), ('B', "Qatar", "QAT", "🇶🇦"), ('B', "Bosnia-Herzegovina", "BIH", "🇧🇦"),
+    ('C', "Scotland", "SCO", "🏴󠁧󠁢󠁳󠁣󠁴󠁿"), ('C', "Morocco", "MAR", "🇲🇦"), ('C', "Brazil", "BRA", "🇧🇷"), ('C', "Haiti", "HAI", "🇭🇹"),
+    ('D', "United States", "USA", "🇺🇸"), ('D', "Australia", "AUS", "🇦🇺"), ('D', "Türkiye", "TUR", "🇹🇷"), ('D', "Paraguay", "PAR", "🇵🇾"),
+    ('E', "Germany", "GER", "🇩🇪"), ('E', "Ivory Coast", "CIV", "🇨🇮"), ('E', "Ecuador", "ECU", "🇪🇨"), ('E', "Curaçao", "CUW", "🇨🇼"),
+    ('F', "Sweden", "SWE", "🇸🇪"), ('F', "Japan", "JPN", "🇯🇵"), ('F', "Netherlands", "NED", "🇳🇱"), ('F', "Tunisia", "TUN", "🇹🇳"),
+    ('G', "New Zealand", "NZL", "🇳🇿"), ('G', "Iran", "IRN", "🇮🇷"), ('G', "Belgium", "BEL", "🇧🇪"), ('G', "Egypt", "EGY", "🇪🇬"),
+    ('H', "Uruguay", "URU", "🇺🇾"), ('H', "Saudi Arabia", "KSA", "🇸🇦"), ('H', "Spain", "ESP", "🇪🇸"), ('H', "Cape Verde", "CPV", "🇨🇻"),
+    ('I', "Norway", "NOR", "🇳🇴"), ('I', "France", "FRA", "🇫🇷"), ('I', "Senegal", "SEN", "🇸🇳"), ('I', "Iraq", "IRQ", "🇮🇶"),
+    ('J', "Argentina", "ARG", "🇦🇷"), ('J', "Austria", "AUT", "🇦🇹"), ('J', "Jordan", "JOR", "🇯🇴"), ('J', "Algeria", "ALG", "🇩🇿"),
+    ('K', "Congo DR", "COD", "🇨🇩"), ('K', "Portugal", "POR", "🇵🇹"), ('K', "Colombia", "COL", "🇨🇴"), ('K', "Uzbekistan", "UZB", "🇺🇿"),
+    ('L', "Croatia", "CRO", "🇭🇷"), ('L', "England", "ENG", "🏴󠁧󠁢󠁥󠁮󠁧󠁿"), ('L', "Ghana", "GHA", "🇬🇭"), ('L', "Panama", "PAN", "🇵🇦"),
+];
+
+/// Build the group standings from the committed seed table (real teams + flags).
+pub fn seed_group_states() -> Vec<GroupState> {
     ('A'..='L')
         .map(|group| GroupState {
             group,
-            teams: (1..=4)
-                .map(|position| Team {
-                    name: format!("{group}{position}"),
-                    code: format!("{group}{position}"),
+            teams: SEED_TEAMS
+                .iter()
+                .filter(|(g, ..)| *g == group)
+                .map(|(_, name, code, flag)| Team {
+                    name: name.to_string(),
+                    code: code.to_string(),
+                    flag: flag.to_string(),
                 })
                 .collect(),
             third_place_status: ThirdPlaceStatus::Unknown,
+            completed: false,
         })
         .collect()
 }
@@ -699,21 +771,25 @@ Annexes
                 group: 'C',
                 teams: vec![],
                 third_place_status: ThirdPlaceStatus::Advanced,
+                completed: false,
             },
             GroupState {
                 group: 'A',
                 teams: vec![],
                 third_place_status: ThirdPlaceStatus::Eliminated,
+                completed: false,
             },
             GroupState {
                 group: 'B',
                 teams: vec![],
                 third_place_status: ThirdPlaceStatus::Unknown,
+                completed: false,
             },
             GroupState {
                 group: 'H',
                 teams: vec![],
                 third_place_status: ThirdPlaceStatus::Advanced,
+                completed: false,
             },
         ];
 

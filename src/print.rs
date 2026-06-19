@@ -10,9 +10,20 @@ use fifa_team3::{
 use crate::APP_NAME;
 use crate::app::PredictorApp;
 use crate::bracket::{
-    COL_GAP, MATCH_H, MATCH_W, ROUND_LABELS, bracket_centers, competitor_label, feeder_match,
-    slot_tag,
+    COL_GAP, MATCH_H, MATCH_W, ROUND_LABELS, bracket_centers, competitor_code, competitor_label,
+    competitor_tag, feeder_match,
 };
+
+/// Embed a flag SVG as a nested `<svg>` placed at (x, y) with the given size.
+/// Injects placement attributes into the flag file's root element.
+fn flag_svg_inline(code: &str, x: f32, y: f32, w: f32, h: f32) -> Option<String> {
+    let bytes = crate::flags::flag_svg(code)?;
+    let raw = std::str::from_utf8(bytes).ok()?;
+    let attrs = format!(
+        "<svg x=\"{x:.1}\" y=\"{y:.1}\" width=\"{w:.1}\" height=\"{h:.1}\" preserveAspectRatio=\"xMidYMid meet\""
+    );
+    Some(raw.replacen("<svg", &attrs, 1))
+}
 
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -146,10 +157,7 @@ pub(crate) fn build_print_html(app: &PredictorApp, report: &PredictionReport) ->
                     MATCH_H / 2.0 - 2.0
                 ));
             }
-            let tag = slot_tag(match side {
-                Side::Left => &km.left,
-                Side::Right => &km.right,
-            });
+            let tag = competitor_tag(km, side, &predictions);
             let name = competitor_label(app, km, side, &index, &predictions);
             let name_fill = if this_pick { accent } else { TEXT };
             let weight = if this_pick { "bold" } else { "normal" };
@@ -159,9 +167,17 @@ pub(crate) fn build_print_html(app: &PredictorApp, report: &PredictionReport) ->
                 x + 8.0,
                 html_escape(&tag)
             ));
+            // Flag for concrete teams, then shift the name right to make room.
+            let mut name_x = x + 40.0;
+            if let Some(code) = competitor_code(app, &name)
+                && let Some(flag) =
+                    flag_svg_inline(&code, x + 34.0, row_top + MATCH_H / 4.0 - 6.5, 18.0, 13.0)
+            {
+                svg.push_str(&flag);
+                name_x = x + 58.0;
+            }
             svg.push_str(&format!(
-                "<text x=\"{:.0}\" y=\"{ty:.0}\" font-size=\"12\" font-weight=\"{weight}\" fill=\"{name_fill}\">{}</text>",
-                x + 40.0,
+                "<text x=\"{name_x:.0}\" y=\"{ty:.0}\" font-size=\"12\" font-weight=\"{weight}\" fill=\"{name_fill}\">{}</text>",
                 html_escape(&name)
             ));
             // Checkbox.
@@ -190,13 +206,22 @@ pub(crate) fn build_print_html(app: &PredictorApp, report: &PredictionReport) ->
         .map(|team| format!("<p class=\"champ\">🏆 Champion: {}</p>", html_escape(&team)))
         .unwrap_or_default();
 
-    // Standings tables.
+    // Standings tables. With live data, add Pld/Pts/GF/GA/GD columns.
+    let live = !app.live_standings.is_empty();
     let mut tables = String::new();
     for group in &app.groups {
+        let colspan = if live { 8 } else { 3 };
         tables.push_str(&format!(
-            "<table><thead><tr><th colspan=\"3\">Group {}</th></tr></thead><tbody>",
+            "<table><thead><tr><th colspan=\"{colspan}\">Group {}</th></tr>",
             group.group
         ));
+        if live {
+            tables.push_str(
+                "<tr class=\"sub\"><th></th><th>Team</th><th>Pld</th><th>Pts</th>\
+                 <th>GF</th><th>GA</th><th>GD</th><th></th></tr>",
+            );
+        }
+        tables.push_str("<tbody>");
         for (pos, team) in group.teams.iter().enumerate() {
             let (marker, cls) = match pos {
                 0 | 1 => ("Q", "q"),
@@ -207,8 +232,27 @@ pub(crate) fn build_print_html(app: &PredictorApp, report: &PredictionReport) ->
                 },
                 _ => ("X", "x"),
             };
+            let flag = if team.flag.is_empty() {
+                String::new()
+            } else {
+                format!("{} ", team.flag)
+            };
+            let stats = if live {
+                match app.live_stats(group.group, &team.code) {
+                    Some(t) => format!(
+                        "<td class=\"n\">{}</td><td class=\"n b\">{}</td><td class=\"n\">{}</td>\
+                         <td class=\"n\">{}</td><td class=\"n\">{:+}</td>",
+                        t.played, t.points, t.goals_for, t.goals_against, t.goal_diff
+                    ),
+                    None => "<td class=\"n\"></td><td class=\"n\"></td><td class=\"n\"></td>\
+                             <td class=\"n\"></td><td class=\"n\"></td>"
+                        .to_string(),
+                }
+            } else {
+                String::new()
+            };
             tables.push_str(&format!(
-                "<tr><td class=\"pos\">{}</td><td>{} <span class=\"code\">{}</span></td><td class=\"{cls}\">{marker}</td></tr>",
+                "<tr><td class=\"pos\">{}</td><td>{flag}{} <span class=\"code\">{}</span></td>{stats}<td class=\"{cls}\">{marker}</td></tr>",
                 pos + 1,
                 html_escape(&team.name),
                 html_escape(&team.code)
@@ -224,14 +268,20 @@ pub(crate) fn build_print_html(app: &PredictorApp, report: &PredictionReport) ->
 body {{ font-family: Arial, Helvetica, sans-serif; color: #111; margin: 0; }}\
 h1 {{ font-size: 18px; margin: 0 0 6px; }}\
 .champ {{ color: {GOLD}; font-weight: bold; font-size: 15px; margin: 2px 0 8px; }}\
+.bracket {{ page-break-after: always; }}\
 .standings {{ page-break-before: always; padding-top: 4px; }}\
-svg {{ width: 100%; height: auto; }}\
-.grid {{ display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, 1fr); gap: 16px 18px; min-height: 178mm; align-content: stretch; }}\
-table {{ border-collapse: collapse; width: 100%; font-size: 16px; }}\
-th {{ background: #f0f0f0; text-align: left; padding: 9px 10px; font-size: 15px; }}\
-td {{ border-top: 1px solid #ddd; padding: 12px 10px; }}\
+.standings h1 {{ font-size: 16px; margin: 0 0 4px; }}\
+svg {{ display: block; width: auto; height: 172mm; max-width: 100%; margin: 0 auto; }}\
+.grid {{ display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, auto); gap: 8px 14px; align-content: start; }}\
+table {{ border-collapse: collapse; width: 100%; font-size: 13px; page-break-inside: avoid; break-inside: avoid; }}\
+th {{ background: #f0f0f0; text-align: left; padding: 5px 8px; font-size: 13px; }}\
+td {{ border-top: 1px solid #ddd; padding: 5px 8px; }}\
 .pos {{ color: #888; width: 22px; }}\
 .code {{ color: #888; font-size: 12px; }}\
+.sub th {{ background: #f7f7f7; color: #777; font-size: 10px; padding: 3px 6px; text-align: center; }}\
+.sub th:nth-child(2) {{ text-align: left; }}\
+.n {{ text-align: center; font-variant-numeric: tabular-nums; padding: 5px 6px; }}\
+.b {{ font-weight: bold; }}\
 .q {{ color: {GREEN}; font-weight: bold; text-align: center; }}\
 .x {{ color: #dc2626; font-weight: bold; text-align: center; }}\
 .dim {{ color: #888; text-align: center; }}\

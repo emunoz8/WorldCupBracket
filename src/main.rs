@@ -1,19 +1,26 @@
 //! FIFA World Cup 2026 knockout-bracket predictor (eframe/egui desktop app).
 
+// Hide the console window on Windows release builds (keep it for debugging).
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod app;
 mod bracket;
+mod flags;
 mod icon;
+mod live;
 mod print;
+mod saves;
 mod settings;
 mod standings;
 mod theme;
+mod tutorial;
 
 use eframe::egui;
 
 use crate::app::PredictorApp;
 use crate::icon::app_icon;
 
-pub(crate) const APP_NAME: &str = "Knockout Bracket Predictor";
+pub(crate) const APP_NAME: &str = "WC26_Bracket";
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {

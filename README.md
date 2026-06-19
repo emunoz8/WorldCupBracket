@@ -1,4 +1,4 @@
-# Knockout Bracket Predictor
+# WC26_Bracket
 
 A desktop app (Rust + [egui]/[eframe]) for building out the FIFA World Cup 2026
 knockout bracket. Reorder the group standings, see which third-place teams each
@@ -26,17 +26,41 @@ of 32 all the way to the Final.
   you press Save, so a cleared bracket can always be reloaded back.
 - **Dark / light theme** — toggle from the top bar; saved with everything else.
 - **Champion banner** — once the Final is decided, the winner is shown up top.
+- **Guided tutorial** — a 3-step onboarding (arrange groups → pick the 4 worst
+  3rd-place teams → make your first bracket pick); replayable from `? Tutorial`.
+- **Named saves + import/export** — save brackets under a name, load/delete them,
+  or import/export `.json` files anywhere to share with others (`📁 Saves`).
+- **Print** — `🖨 Print` opens a landscape bracket + group-standings report in
+  your browser (Cmd/Ctrl+P to print), with flags.
+- **Live mode** — pull real scores and standings; see below.
+
+## Live Mode
+
+Open `🛰 Live`, optionally paste a [football-data.org] token, and turn on **Live
+mode** (auto-polls every 20s). It opens a movable **Live Center** with:
+
+- **Today's games & live scores** (local time) — the in-play match breathes green.
+- **Possible final standings** — a what-if projection if current scores hold,
+  with ▲/▼ movement arrows and the live game highlighted.
+- **3rd-place ranking** — the 12 third-place teams ranked, top 8 advancing.
+- **Goal alerts** — bottom-right toasts + a beep when a team scores.
+
+Live scores come from **ESPN's public scoreboard** (no key needed); group
+**standings / results** additionally use football-data.org if you provide a free
+token (env `FOOTBALL_DATA_TOKEN` or the in-app field). The `🛰 Live` window also
+shows an **API log** of every request for debugging. Live data is view-only — it
+never overwrites your own bracket/standings, and loading a save turns it off.
 
 ## Where State Lives
 
 - **Live save** — written to your OS config directory on first Save:
-  - macOS: `~/Library/Application Support/Knockout Bracket Predictor/save.json`
-  - Windows: `%APPDATA%\Knockout Bracket Predictor\save.json`
-  - Linux: `~/.config/Knockout Bracket Predictor/save.json`
-- **Team seed** — `data/teams.json` (committed) supplies the groups and teams
-  until your first Save exists.
-- **Load order** — `save.json` → `data/teams.json` → built-in `A1..L4`
-  placeholders if both are missing.
+  - macOS: `~/Library/Application Support/WC26_Bracket/save.json`
+  - Windows: `%APPDATA%\WC26_Bracket\save.json`
+  - Linux: `~/.config/WC26_Bracket/save.json`
+- **Team seed** — the official group draw (names, 3-letter codes, flag emoji)
+  is baked into the binary as `SEED_TEAMS` in `src/lib.rs`. Flags are embedded
+  flag SVGs (`assets/flags/`, via `include_bytes!`).
+- **Load order** — `save.json` if present, otherwise the built-in seed teams.
 
 ## Run The Desktop App
 
@@ -44,7 +68,7 @@ of 32 all the way to the Final.
 cargo run
 ```
 
-Opens a window titled **Knockout Bracket Predictor**.
+Opens a window titled **WC26_Bracket**.
 
 ### Using it
 
@@ -92,8 +116,34 @@ Writes `data/match_occurrences.txt`.
 cargo build --release
 ```
 
-- macOS/Linux: `target/release/fifa-bracket-predictor`
-- Windows: `target/release/fifa-bracket-predictor.exe`
+- macOS/Linux: `target/release/wc26_bracket`
+- Windows: `target/release/wc26_bracket.exe`
+
+The binary is self-contained — teams, flags, and the Annex C table are embedded,
+so nothing in `data/` is needed at runtime.
+
+### Cross-platform builds
+
+**macOS universal** (Intel + Apple Silicon):
+
+```bash
+cargo build --release --target x86_64-apple-darwin
+cargo build --release --target aarch64-apple-darwin
+lipo -create -output dist/wc26_bracket \
+  target/x86_64-apple-darwin/release/wc26_bracket \
+  target/aarch64-apple-darwin/release/wc26_bracket
+```
+
+**Windows** (from macOS; needs `brew install mingw-w64`):
+
+```bash
+rustup target add x86_64-pc-windows-gnu
+CARGO_TARGET_DIR=/tmp/wc26_win cargo build --release --target x86_64-pc-windows-gnu
+# → /tmp/wc26_win/x86_64-pc-windows-gnu/release/wc26_bracket.exe
+```
+
+Built binaries are written to `dist/` (git-ignored); attach them to a GitHub
+Release. Note: the Linux build needs ALSA (`libasound2`) for audio.
 
 ## Tests
 
@@ -107,3 +157,4 @@ cargo test
 
 [egui]: https://github.com/emilk/egui
 [eframe]: https://crates.io/crates/eframe
+[football-data.org]: https://www.football-data.org/

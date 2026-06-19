@@ -1,4 +1,5 @@
 /target
+/dist
 .DS_Store
 
 # Live saved state now lives in the OS config dir, not the repo.

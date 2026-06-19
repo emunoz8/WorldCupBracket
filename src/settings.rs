@@ -3,10 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use fifa_team3::{GroupState, Side, default_group_states};
-
-/// Committed seed of groups + teams; used until the first Save creates the save file.
-pub(crate) const TEAMS_PATH: &str = "data/teams.json";
+use fifa_team3::{GroupState, Side, seed_group_states};
 
 /// Where the live save lives: the per-user OS config directory, e.g.
 /// `~/Library/Application Support/<APP>/save.json` (macOS),
@@ -19,6 +16,45 @@ pub(crate) fn save_path() -> PathBuf {
     }
 }
 
+/// Directory holding the user's named save files (one `<name>.json` each).
+pub(crate) fn saves_dir() -> PathBuf {
+    match dirs::config_dir() {
+        Some(dir) => dir.join(crate::APP_NAME).join("saves"),
+        None => PathBuf::from("data/saves"),
+    }
+}
+
+/// Path of a named save, sanitizing the name to a safe file stem.
+pub(crate) fn named_save_path(name: &str) -> PathBuf {
+    let safe: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    saves_dir().join(format!("{}.json", safe.trim()))
+}
+
+/// All saved names (file stems) in the saves directory, sorted.
+pub(crate) fn list_saves() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(saves_dir())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            (path.extension()?.to_str()? == "json")
+                .then(|| path.file_stem()?.to_str().map(str::to_string))?
+        })
+        .collect();
+    names.sort();
+    names
+}
+
 /// One snapshot of everything the user can change: standings order/third-place,
 /// theme, panel visibility, and bracket picks. Written by Save, read by Reload.
 #[derive(serde::Deserialize, serde::Serialize)]
@@ -29,6 +65,9 @@ pub(crate) struct AppState {
     pub(crate) picks: HashMap<usize, Side>,
     #[serde(default)]
     pub(crate) groups: Vec<GroupState>,
+    /// Whether the onboarding tutorial has been completed/skipped.
+    #[serde(default)]
+    pub(crate) tutorial_seen: bool,
 }
 
 impl Default for AppState {
@@ -37,7 +76,8 @@ impl Default for AppState {
             dark: true,
             show_standings: true,
             picks: HashMap::new(),
-            groups: default_group_states(),
+            groups: seed_group_states(),
+            tutorial_seen: false,
         }
     }
 }

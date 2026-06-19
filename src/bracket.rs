@@ -8,13 +8,13 @@ use fifa_team3::{
 };
 
 use crate::app::PredictorApp;
-use crate::theme::{COLOR_GOLD, COLOR_GREEN, Palette};
+use crate::theme::{COLOR_GOLD, COLOR_GREEN, COLOR_RED, Palette};
 
 pub(crate) const MATCH_W: f32 = 200.0;
 pub(crate) const MATCH_H: f32 = 58.0;
-const PAIR_GAP: f32 = 4.0;
-const GROUP_GAP: f32 = 26.0;
-const QUAD_GAP: f32 = 40.0;
+const PAIR_GAP: f32 = 30.0;
+const GROUP_GAP: f32 = 34.0;
+const QUAD_GAP: f32 = 46.0;
 pub(crate) const COL_GAP: f32 = 46.0;
 const HEADER_H: f32 = 26.0;
 pub(crate) const ROUND_LABELS: [&str; 5] = ["R32", "R16", "QF", "SF", "Final"];
@@ -162,13 +162,14 @@ pub(crate) fn bracket_view(ui: &mut egui::Ui, app: &mut PredictorApp, report: &P
         }
         if ui
             .add(
-                egui::Button::new(RichText::new("Reset picks").size(11.0).color(pal.dim))
+                egui::Button::new(RichText::new("Reset all").size(11.0).color(COLOR_RED))
                     .fill(pal.card)
                     .stroke(Stroke::new(1.0, pal.border)),
             )
+            .on_hover_text("Clear standings, qualifiers, and all bracket picks")
             .clicked()
         {
-            app.picks.clear();
+            app.reset_all();
         }
     });
     ui.add_space(8.0);
@@ -241,12 +242,18 @@ pub(crate) fn bracket_view(ui: &mut egui::Ui, app: &mut PredictorApp, report: &P
     }
 
     // Clicking the already-winning side again clears the result (undecided).
+    let made_pick = !clicks.is_empty();
     for (number, side) in clicks {
         if app.picks.get(&number) == Some(&side) {
             app.picks.remove(&number);
         } else {
             app.picks.insert(number, side);
         }
+    }
+
+    // The first bracket interaction ends the onboarding tutorial.
+    if made_pick && app.tutorial == Some(crate::tutorial::TutorialStep::Bracket) {
+        crate::tutorial::finish(app);
     }
 }
 
@@ -290,6 +297,17 @@ fn draw_ko_match(
         pal.dim,
     );
 
+    // Venue line beneath the card: stadium · state, country.
+    if let Some((stadium, state, country)) = fifa_team3::match_venue(km.match_number) {
+        painter.text(
+            Pos2::new(top_left.x + 4.0, top_left.y + MATCH_H + 2.0),
+            egui::Align2::LEFT_TOP,
+            format!("{stadium} · {state}, {country}"),
+            egui::FontId::proportional(8.5),
+            pal.dim,
+        );
+    }
+
     painter.line_segment(
         [
             Pos2::new(top_left.x + 8.0, divider_y),
@@ -304,12 +322,31 @@ fn draw_ko_match(
         Vec2::new(MATCH_W, MATCH_H / 2.0),
     );
 
+    let left_label = competitor_label(app, km, Side::Left, index, predictions);
+    let right_label = competitor_label(app, km, Side::Right, index, predictions);
+    let left_code = competitor_code(app, &left_label);
+    let right_code = competitor_code(app, &right_label);
+
+    // R32 entry teams are "confirmed" only once their source group is completed;
+    // unconfirmed competitors render shaded. Later rounds are always solid.
+    let confirmed = |side: Side| -> bool {
+        if km.round != 0 {
+            return true;
+        }
+        match side_group_char(km, side, predictions) {
+            Some(g) => app.groups.iter().any(|gr| gr.group == g && gr.completed),
+            None => false,
+        }
+    };
+
     draw_competitor_row(
         ui,
         painter,
         top_rect,
-        &slot_tag(&km.left),
-        &competitor_label(app, km, Side::Left, index, predictions),
+        &competitor_tag(km, Side::Left, predictions),
+        &left_label,
+        left_code.as_deref(),
+        confirmed(Side::Left),
         pick == Some(Side::Left),
         is_final,
         pal,
@@ -318,8 +355,10 @@ fn draw_ko_match(
         ui,
         painter,
         bot_rect,
-        &slot_tag(&km.right),
-        &competitor_label(app, km, Side::Right, index, predictions),
+        &competitor_tag(km, Side::Right, predictions),
+        &right_label,
+        right_code.as_deref(),
+        confirmed(Side::Right),
         pick == Some(Side::Right),
         is_final,
         pal,
@@ -353,11 +392,18 @@ fn draw_competitor_row(
     rect: Rect,
     tag: &str,
     team: &str,
+    flag_code: Option<&str>,
+    confirmed: bool,
     picked: bool,
     is_final: bool,
     pal: Palette,
 ) {
     let accent = if is_final { COLOR_GOLD } else { COLOR_GREEN };
+    let flag_tint = if confirmed {
+        Color32::WHITE
+    } else {
+        Color32::from_rgba_unmultiplied(255, 255, 255, 105)
+    };
 
     if picked {
         painter.rect_filled(
@@ -384,10 +430,34 @@ fn draw_competitor_row(
         pal.dim,
     );
 
-    // Team name.
-    let team_color = if picked { accent } else { pal.text };
+    // Flag (if this competitor resolves to a concrete team), then name.
+    let mut name_x = rect.min.x + 40.0;
+    if let Some(code) = flag_code
+        && let Some(id) = flag_texture(ui.ctx(), code)
+    {
+        let fr = Rect::from_min_size(
+            Pos2::new(rect.min.x + 36.0, rect.center().y - 6.5),
+            Vec2::new(20.0, 13.0),
+        );
+        painter.image(
+            id,
+            fr,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            flag_tint,
+        );
+        name_x = rect.min.x + 62.0;
+    }
+
+    // Team name (shaded when the source group's result is not yet final).
+    let team_color = if picked {
+        accent
+    } else if confirmed {
+        pal.text
+    } else {
+        pal.dim
+    };
     painter.text(
-        Pos2::new(rect.min.x + 40.0, text_y),
+        Pos2::new(name_x, text_y),
         egui::Align2::LEFT_TOP,
         team,
         egui::FontId::proportional(12.0),
@@ -418,6 +488,80 @@ fn draw_competitor_row(
             egui::StrokeKind::Middle,
         );
     }
+}
+
+/// The 3-letter code for a displayed competitor name, when it is a concrete team
+/// (strips any trailing "(NN%)"). Returns None for "Winner M.." / "3rd place" etc.
+pub(crate) fn competitor_code(app: &PredictorApp, display_name: &str) -> Option<String> {
+    let key = display_name
+        .split(" (")
+        .next()
+        .unwrap_or(display_name)
+        .trim();
+    app.groups
+        .iter()
+        .flat_map(|g| &g.teams)
+        .find(|t| t.name == key)
+        .map(|t| t.code.clone())
+}
+
+/// The source group letter for an R32 competitor (Group slot or predicted 3rd place).
+fn side_group_char(
+    km: &KoMatch,
+    side: Side,
+    predictions: &HashMap<&str, &WinnerPrediction>,
+) -> Option<char> {
+    let slot = match side {
+        Side::Left => km.left,
+        Side::Right => km.right,
+    };
+    match slot {
+        Slot::Group(s) => s.chars().nth(1),
+        Slot::ThirdPlace => competitor_tag(km, side, predictions)
+            .chars()
+            .nth(1)
+            .filter(|c| c.is_ascii_uppercase()),
+        _ => None,
+    }
+}
+
+/// Load (and cache) the embedded flag SVG for a code as a GPU texture id.
+fn flag_texture(ctx: &egui::Context, code: &str) -> Option<egui::TextureId> {
+    let bytes = crate::flags::flag_svg(code)?;
+    let uri = format!("bytes://flag/{code}.svg");
+    ctx.include_bytes(uri.clone(), bytes);
+    match ctx.try_load_texture(
+        &uri,
+        egui::TextureOptions::LINEAR,
+        egui::SizeHint::Size(40, 26),
+    ) {
+        Ok(egui::load::TexturePoll::Ready { texture }) => Some(texture.id),
+        _ => None,
+    }
+}
+
+/// Slot tag for one competitor. For a third-place opponent this resolves to the
+/// predicted group, e.g. `3C`, instead of a generic `3rd`.
+pub(crate) fn competitor_tag(
+    km: &KoMatch,
+    side: Side,
+    predictions: &HashMap<&str, &WinnerPrediction>,
+) -> String {
+    let slot = match side {
+        Side::Left => km.left,
+        Side::Right => km.right,
+    };
+    if slot == Slot::ThirdPlace {
+        if let Slot::Group(s) = km.left {
+            return predictions
+                .get(s)
+                .and_then(|p| p.opponents.first())
+                .map(|o| o.opponent.clone())
+                .unwrap_or_else(|| "3rd".to_string());
+        }
+        return "3rd".to_string();
+    }
+    slot_tag(&slot)
 }
 
 /// Display text for one competitor, handling the predicted 3rd-place opponent.

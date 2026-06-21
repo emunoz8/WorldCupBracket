@@ -102,7 +102,7 @@ football-data just confirms it later (and supplies the fair-play card data). The
 ## Run The Desktop App
 
 ```bash
-cargo run
+cargo run --bin wc26_bracket
 ```
 
 Opens a window titled **WC26_Bracket**.

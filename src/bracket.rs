@@ -327,10 +327,15 @@ fn draw_ko_match(
     let left_code = competitor_code(app, &left_label);
     let right_code = competitor_code(app, &right_label);
 
-    // R32 entry teams are "confirmed" only once their source group is completed;
-    // unconfirmed competitors render shaded. Later rounds are always solid.
+    // R32 entry teams are "confirmed" — solid, not shaded — once their slot is
+    // locked: either the source group is manually marked completed, or live data
+    // has mathematically clinched the exact position the slot demands. Later
+    // rounds are always solid.
     let confirmed = |side: Side| -> bool {
         if km.round != 0 {
+            return true;
+        }
+        if slot_clinched(app, km, side) {
             return true;
         }
         match side_group_char(km, side, predictions) {
@@ -505,6 +510,30 @@ pub(crate) fn competitor_code(app: &PredictorApp, display_name: &str) -> Option<
         .map(|t| t.code.clone())
 }
 
+/// True when an R32 Group slot's occupant has mathematically clinched the exact
+/// position the slot demands (e.g. slot "1A" → group A's leader is locked in
+/// 1st). Third-place slots aren't covered here (they fall back to completion).
+fn slot_clinched(app: &PredictorApp, km: &KoMatch, side: Side) -> bool {
+    let slot = match side {
+        Side::Left => km.left,
+        Side::Right => km.right,
+    };
+    let Slot::Group(s) = slot else { return false };
+    let mut ch = s.chars();
+    let pos = ch.next().and_then(|c| c.to_digit(10));
+    let grp = ch.next();
+    let (Some(pos), Some(grp)) = (pos, grp) else {
+        return false;
+    };
+    let Some(group) = app.groups.iter().find(|gr| gr.group == grp) else {
+        return false;
+    };
+    let Some(team) = group.teams.get((pos as usize).saturating_sub(1)) else {
+        return false;
+    };
+    app.live.clinched.get(&team.code) == Some(&pos)
+}
+
 /// The source group letter for an R32 competitor (Group slot or predicted 3rd place).
 fn side_group_char(
     km: &KoMatch,
@@ -527,8 +556,8 @@ fn side_group_char(
 
 /// Load (and cache) the embedded flag SVG for a code as a GPU texture id.
 fn flag_texture(ctx: &egui::Context, code: &str) -> Option<egui::TextureId> {
-    let bytes = crate::flags::flag_svg(code)?;
-    let uri = format!("bytes://flag/{code}.svg");
+    let bytes = crate::flags::flag_png(code)?;
+    let uri = format!("bytes://flag/{code}.png");
     ctx.include_bytes(uri.clone(), bytes);
     match ctx.try_load_texture(
         &uri,

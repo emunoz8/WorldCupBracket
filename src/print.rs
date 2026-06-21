@@ -207,7 +207,7 @@ pub(crate) fn build_print_html(app: &PredictorApp, report: &PredictionReport) ->
         .unwrap_or_default();
 
     // Standings tables. With live data, add Pld/Pts/GF/GA/GD columns.
-    let live = !app.live_standings.is_empty();
+    let live = !app.live.live_standings.is_empty();
     let mut tables = String::new();
     for group in &app.groups {
         let colspan = if live { 8 } else { 3 };
@@ -270,17 +270,17 @@ h1 {{ font-size: 18px; margin: 0 0 6px; }}\
 .champ {{ color: {GOLD}; font-weight: bold; font-size: 15px; margin: 2px 0 8px; }}\
 .bracket {{ page-break-after: always; }}\
 .standings {{ page-break-before: always; padding-top: 4px; }}\
-.standings h1 {{ font-size: 16px; margin: 0 0 4px; }}\
+.standings h1 {{ font-size: 14px; margin: 0 0 3px; }}\
 svg {{ display: block; width: auto; height: 172mm; max-width: 100%; margin: 0 auto; }}\
-.grid {{ display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, auto); gap: 8px 14px; align-content: start; }}\
-table {{ border-collapse: collapse; width: 100%; font-size: 13px; page-break-inside: avoid; break-inside: avoid; }}\
-th {{ background: #f0f0f0; text-align: left; padding: 5px 8px; font-size: 13px; }}\
-td {{ border-top: 1px solid #ddd; padding: 5px 8px; }}\
-.pos {{ color: #888; width: 22px; }}\
-.code {{ color: #888; font-size: 12px; }}\
-.sub th {{ background: #f7f7f7; color: #777; font-size: 10px; padding: 3px 6px; text-align: center; }}\
+.grid {{ display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: repeat(3, auto); gap: 6px 10px; align-content: start; }}\
+table {{ border-collapse: collapse; width: 100%; font-size: 11px; page-break-inside: avoid; break-inside: avoid; }}\
+th {{ background: #f0f0f0; text-align: left; padding: 3px 5px; font-size: 11px; }}\
+td {{ border-top: 1px solid #ddd; padding: 2px 5px; }}\
+.pos {{ color: #888; width: 16px; }}\
+.code {{ color: #888; font-size: 10px; }}\
+.sub th {{ background: #f7f7f7; color: #777; font-size: 9px; padding: 2px 4px; text-align: center; }}\
 .sub th:nth-child(2) {{ text-align: left; }}\
-.n {{ text-align: center; font-variant-numeric: tabular-nums; padding: 5px 6px; }}\
+.n {{ text-align: center; font-variant-numeric: tabular-nums; padding: 2px 3px; }}\
 .b {{ font-weight: bold; }}\
 .q {{ color: {GREEN}; font-weight: bold; text-align: center; }}\
 .x {{ color: #dc2626; font-weight: bold; text-align: center; }}\

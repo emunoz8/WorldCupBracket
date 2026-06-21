@@ -140,7 +140,7 @@ pub(crate) fn group_table(ui: &mut egui::Ui, app: &mut PredictorApp, group_index
             ui.separator();
 
             // Legend for the live stat column (only when live data is loaded).
-            if !app.live_standings.is_empty() {
+            if !app.live.live_standings.is_empty() {
                 ui.horizontal(|ui| {
                     ui.add_space(12.0);
                     ui.label(
@@ -215,9 +215,9 @@ pub(crate) fn group_table(ui: &mut egui::Ui, app: &mut PredictorApp, group_index
 
 /// Draw a team's flag (embedded SVG) at the given size, or reserve the width.
 pub(crate) fn flag_image(ui: &mut egui::Ui, code: &str, size: Vec2) {
-    if let Some(bytes) = crate::flags::flag_svg(code) {
+    if let Some(bytes) = crate::flags::flag_png(code) {
         ui.add(
-            egui::Image::from_bytes(format!("bytes://flag/{code}.svg"), bytes)
+            egui::Image::from_bytes(format!("bytes://flag/{code}.png"), bytes)
                 .fit_to_exact_size(size),
         );
     } else {
@@ -255,7 +255,25 @@ fn standings_row(ui: &mut egui::Ui, app: &mut PredictorApp, group_index: usize, 
     let pal = app.pal();
     let is_source = app.dragged == Some((group_index, position));
     let is_drag_in_group = app.dragged.map(|(gi, _)| gi) == Some(group_index);
-    let name_color = if is_source { pal.dim } else { pal.text };
+
+    // Clinch state: once live data has a team's final group position locked
+    // (mathematically certain), the row renders solid; otherwise — while live
+    // data is present but the slot is still in play — it renders shaded.
+    let live_on = !app.live.live_standings.is_empty();
+    let code = app.groups[group_index]
+        .teams
+        .get(position)
+        .map(|t| t.code.clone());
+    let clinched = code
+        .as_deref()
+        .and_then(|c| app.live.clinched.get(c))
+        .copied();
+    let solid = !live_on || app.groups[group_index].completed || clinched.is_some();
+    let name_color = if is_source || !solid {
+        pal.dim
+    } else {
+        pal.text
+    };
 
     // Live stats (points, GF, GA, GD) for this team, if a sync has happened.
     let group_char = app.groups[group_index].group;
@@ -319,6 +337,10 @@ fn standings_row(ui: &mut egui::Ui, app: &mut PredictorApp, group_index: usize, 
         };
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(RichText::new(marker).size(11.0).color(color).strong());
+            if clinched.is_some() {
+                ui.label(RichText::new("🔒").size(10.0).color(pal.dim))
+                    .on_hover_text("Position mathematically clinched");
+            }
         });
     });
 

@@ -42,38 +42,8 @@ pub(crate) struct PredictorApp {
     pub(crate) show_saves: bool,
     /// Text-field buffer for naming a new save.
     pub(crate) save_name: String,
-    /// Whether the live-data window is open.
-    pub(crate) show_live: bool,
-    /// football-data.org API token.
-    pub(crate) api_key: String,
-    /// Receiver for an in-flight background fetch, if any.
-    pub(crate) live_rx: Option<std::sync::mpsc::Receiver<crate::live::LiveMsg>>,
-    /// Status line for the live-data window.
-    pub(crate) live_status: Option<String>,
-    /// Standings from FINISHED matches only (stable mid-match).
-    pub(crate) live_standings: Vec<crate::live::LiveStanding>,
-    /// Cross-group 3rd-place ranking from the last live sync (top 8 advance).
-    pub(crate) third_rank: Vec<crate::live::ThirdPlaceRank>,
-    /// Live mode: poll scores every 20s and raise alerts.
-    pub(crate) live_mode: bool,
-    /// When the last automatic poll fired.
-    pub(crate) last_poll: Option<Instant>,
-    /// Previous poll's group points (code → points) for result-based alerts.
-    prev_group_points: HashMap<String, i64>,
-    /// Previous poll's 3rd-place ranks (code → index) for diffing.
-    prev_third: HashMap<String, usize>,
-    /// Movement since last poll for the 3rd-place table arrows (-1 up, +1 down).
-    pub(crate) third_delta: HashMap<String, i8>,
-    /// Bottom-right live notifications.
-    pub(crate) toasts: Vec<crate::live::Toast>,
-    /// Today's fixtures from the last sync.
-    pub(crate) today_fixtures: Vec<crate::live::LiveFixture>,
-    /// Previous poll's live scores per fixture, for goal detection.
-    prev_scores: HashMap<String, (i64, i64)>,
-    /// Whether the combined Live Center window is shown.
-    pub(crate) show_live_center: bool,
-    /// Rolling log of API calls (most recent last).
-    pub(crate) api_log: Vec<String>,
+    /// All live-mode state (windows, sync, standings, alerts).
+    pub(crate) live: crate::live::LiveState,
 }
 
 impl PredictorApp {
@@ -119,310 +89,8 @@ impl PredictorApp {
             tutorial_seen,
             show_saves: false,
             save_name: String::new(),
-            show_live: false,
-            api_key: std::env::var("FOOTBALL_DATA_TOKEN").unwrap_or_default(),
-            live_rx: None,
-            live_status: None,
-            live_standings: Vec::new(),
-            third_rank: Vec::new(),
-            live_mode: false,
-            last_poll: None,
-            prev_group_points: HashMap::new(),
-            prev_third: HashMap::new(),
-            third_delta: HashMap::new(),
-            toasts: Vec::new(),
-            today_fixtures: Vec::new(),
-            prev_scores: HashMap::new(),
-            show_live_center: true,
-            api_log: Vec::new(),
+            live: crate::live::LiveState::default(),
         }
-    }
-
-    /// Append a timestamped line to the API log (keeping the last ~120).
-    fn log_line(&mut self, line: String) {
-        self.api_log.push(line);
-        let len = self.api_log.len();
-        if len > 120 {
-            self.api_log.drain(0..len - 120);
-        }
-    }
-
-    /// Fire goal alerts (toast + sound) when a live fixture's score increased.
-    fn detect_goals(&mut self) {
-        let baseline = self.prev_scores.is_empty();
-        let mut new_scores: HashMap<String, (i64, i64)> = HashMap::new();
-        let mut goal = false;
-        for f in &self.today_fixtures {
-            let Some((h, a)) = f.score else { continue };
-            let key = format!("{}-{}", f.home_code, f.away_code);
-            if !baseline && let Some(&(oh, oa)) = self.prev_scores.get(&key) {
-                if h > oh {
-                    self.toasts.push(crate::live::Toast::new(
-                        format!("GOAL · {} {h}-{a} {}", f.home, f.away),
-                        crate::live::AlertKind::Up,
-                    ));
-                    goal = true;
-                }
-                if a > oa {
-                    self.toasts.push(crate::live::Toast::new(
-                        format!("GOAL · {} {h}-{a} {}", f.away, f.home),
-                        crate::live::AlertKind::Up,
-                    ));
-                    goal = true;
-                }
-            }
-            new_scores.insert(key, (h, a));
-        }
-        if goal {
-            crate::live::play_alert(true);
-        }
-        self.prev_scores = new_scores;
-    }
-
-    /// Kick off a background fetch of live standings from football-data.org.
-    pub(crate) fn start_live_sync(&mut self, ctx: egui::Context, trigger: &str) {
-        // No token is fine: football-data is skipped, but ESPN still gives live
-        // scores/fixtures. A token additionally enables standings/results.
-        let t = chrono::Local::now().format("%H:%M:%S");
-        self.log_line(format!("{t}  sync started ({trigger})"));
-        let provider = Box::new(crate::live::FootballData {
-            token: self.api_key.trim().to_string(),
-        });
-        self.live_rx = Some(crate::live::spawn_fetch(provider, ctx));
-        self.live_status = Some("Syncing…".to_string());
-    }
-
-    /// Drain a finished background fetch and apply it.
-    fn poll_live(&mut self) {
-        use std::sync::mpsc::TryRecvError;
-        let result = self.live_rx.as_ref().map(|rx| rx.try_recv());
-        match result {
-            Some(Ok(crate::live::LiveMsg::Data(data))) => {
-                self.apply_live(data);
-                self.live_rx = None;
-            }
-            Some(Ok(crate::live::LiveMsg::Error(e))) => {
-                self.live_status = Some(format!("Sync failed: {e}"));
-                self.live_rx = None;
-            }
-            Some(Err(TryRecvError::Disconnected)) => {
-                self.live_status = Some("Sync failed: worker stopped".to_string());
-                self.live_rx = None;
-            }
-            _ => {}
-        }
-    }
-
-    /// Reorder groups, rank 3rd-place, and apply finished knockout results.
-    fn apply_live(&mut self, data: crate::live::LiveData) {
-        let crate::live::LiveData {
-            standings,
-            results,
-            today,
-            log,
-        } = data;
-        for line in log {
-            self.log_line(line);
-        }
-        self.today_fixtures = today;
-
-        // Goal alerts: compare each live fixture's score to the previous poll.
-        self.detect_goals();
-
-        // Stickiness: football-data can briefly un-report a just-finished match,
-        // which would drop a team's points and oscillate the order. Never let a
-        // team's played-count go down vs the previous poll — keep the fuller stats.
-        let mut standings = standings;
-        let prev: HashMap<&str, &crate::live::LiveTeam> = self
-            .live_standings
-            .iter()
-            .flat_map(|s| s.teams.iter().map(|t| (t.code.as_str(), t)))
-            .collect();
-        for s in &mut standings {
-            for t in &mut s.teams {
-                if let Some(old) = prev.get(t.code.as_str())
-                    && old.played > t.played
-                {
-                    *t = (*old).clone();
-                }
-            }
-        }
-        crate::live::sort_standings(&mut standings);
-
-        // Break remaining ties using the user's own group order (the left panel),
-        // so the live standings / projection match what's shown on the left.
-        for s in &mut standings {
-            if let Some(group) = self.groups.iter().find(|g| g.group == s.group) {
-                let order: Vec<&str> = group.teams.iter().map(|t| t.code.as_str()).collect();
-                let rank = |code: &str| order.iter().position(|c| *c == code).unwrap_or(usize::MAX);
-                s.teams.sort_by(|x, y| {
-                    y.points
-                        .cmp(&x.points)
-                        .then(y.goal_diff.cmp(&x.goal_diff))
-                        .then(y.goals_for.cmp(&x.goals_for))
-                        .then_with(|| rank(&x.code).cmp(&rank(&y.code)))
-                });
-                for (i, t) in s.teams.iter_mut().enumerate() {
-                    t.position = (i + 1) as u32;
-                }
-            }
-        }
-
-        // Live data is view-only: it populates the Live Center (standings, 3rd-place
-        // table, stat badges) but never mutates the user's own groups — so saved
-        // brackets/standings stay exactly as saved.
-        let applied = standings.len();
-        self.third_rank = crate::live::third_place_ranking(&standings);
-        self.live_standings = standings;
-
-        // Raise alerts for any movement vs the previous poll.
-        self.diff_and_alert();
-
-        // Apply finished knockout results to bracket picks.
-        let wins = self.apply_live_results(&results);
-        self.live_status = Some(format!(
-            "Synced {applied} groups · {wins} knockout results from live data"
-        ));
-    }
-
-    /// Alert only on real events: a team gaining points (a result), or a team
-    /// crossing the top-8 cutoff in the 3rd-place race. With sticky stats these
-    /// only ever move one way, so each alert fires once — no oscillation.
-    fn diff_and_alert(&mut self) {
-        let baseline = self.prev_group_points.is_empty();
-        let mut events: Vec<(String, crate::live::AlertKind)> = Vec::new();
-        let mut any_up = false;
-
-        if !baseline {
-            // A team's points went up → it just won or drew a match.
-            for s in &self.live_standings {
-                for t in &s.teams {
-                    if let Some(&old) = self.prev_group_points.get(&t.code)
-                        && t.points > old
-                    {
-                        any_up = true;
-                        events.push((
-                            format!(
-                                "+ {} · {} in Group {}",
-                                t.name,
-                                ordinal(t.position),
-                                s.group
-                            ),
-                            crate::live::AlertKind::Up,
-                        ));
-                    }
-                }
-            }
-            // A 3rd-place team crossed the top-8 line (advancing ↔ eliminated).
-            for (i, r) in self.third_rank.iter().enumerate() {
-                if let Some(&old) = self.prev_third.get(&r.code) {
-                    let was_in = old < 8;
-                    let now_in = i < 8;
-                    if was_in != now_in {
-                        let up = now_in;
-                        any_up |= up;
-                        let (mark, status) = if now_in {
-                            ("+", "now advancing")
-                        } else {
-                            ("-", "now ELIMINATED")
-                        };
-                        events.push((
-                            format!("{mark} {} · 3rd-place race ({status})", r.name),
-                            if up {
-                                crate::live::AlertKind::Up
-                            } else {
-                                crate::live::AlertKind::Down
-                            },
-                        ));
-                    }
-                }
-            }
-        }
-
-        let any_down = events
-            .iter()
-            .any(|(_, k)| matches!(k, crate::live::AlertKind::Down));
-        for (text, kind) in events {
-            self.toasts.push(crate::live::Toast::new(text, kind));
-        }
-        if any_up {
-            crate::live::play_alert(true);
-        }
-        if any_down {
-            crate::live::play_alert(false);
-        }
-
-        // Movement snapshot for the 3rd-place table arrows (vs the previous poll).
-        self.third_delta = self
-            .third_rank
-            .iter()
-            .enumerate()
-            .filter_map(|(i, r)| {
-                self.prev_third
-                    .get(&r.code)
-                    .map(|&old| (r.code.clone(), (i as i64 - old as i64).signum() as i8))
-            })
-            .collect();
-
-        // Record this poll as the new baseline.
-        self.prev_group_points = self
-            .live_standings
-            .iter()
-            .flat_map(|s| s.teams.iter().map(|t| (t.code.clone(), t.points)))
-            .collect();
-        self.prev_third = self
-            .third_rank
-            .iter()
-            .enumerate()
-            .map(|(i, r)| (r.code.clone(), i))
-            .collect();
-    }
-
-    /// Set bracket picks from finished live knockout matches. Matches are paired
-    /// by the two teams (no FIFA match-number dependency); rounds are processed in
-    /// order so winners propagate forward. Returns how many picks were set.
-    fn apply_live_results(&mut self, results: &[crate::live::LiveResult]) -> usize {
-        use std::collections::HashMap;
-        let report = self.report();
-        let predictions: HashMap<&str, &WinnerPrediction> = report
-            .predictions
-            .iter()
-            .map(|p| (p.winner_slot.as_str(), p))
-            .collect();
-        let mut matches = fifa_team3::knockout_matches();
-        matches.sort_by_key(|m| m.round);
-        let index: HashMap<usize, KoMatch> = matches.iter().map(|m| (m.match_number, *m)).collect();
-
-        let mut count = 0;
-        for km in &matches {
-            let left = self.resolve_side(km, Side::Left, &index, &predictions);
-            let right = self.resolve_side(km, Side::Right, &index, &predictions);
-            let (Some(lc), Some(rc)) = (
-                crate::bracket::competitor_code(self, &left),
-                crate::bracket::competitor_code(self, &right),
-            ) else {
-                continue;
-            };
-            // Find a finished result whose two teams match this pairing.
-            if let Some(result) = results.iter().find(|r| {
-                r.winner.is_some()
-                    && ((r.home == lc && r.away == rc) || (r.home == rc && r.away == lc))
-            }) {
-                let winner = result.winner.as_deref().unwrap_or("");
-                let side = if winner == lc {
-                    Some(Side::Left)
-                } else if winner == rc {
-                    Some(Side::Right)
-                } else {
-                    None
-                };
-                if let Some(side) = side {
-                    self.picks.insert(km.match_number, side);
-                    count += 1;
-                }
-            }
-        }
-        count
     }
 
     /// Reset everything to zero: seed teams, no standings results, no bracket picks.
@@ -446,7 +114,7 @@ impl PredictorApp {
         });
     }
 
-    fn report(&self) -> PredictionReport {
+    pub(crate) fn report(&self) -> PredictionReport {
         let (passing, eliminated) = annex_filters_from_groups(&self.groups);
         prediction_report(&self.annex, &passing, &eliminated)
     }
@@ -454,7 +122,8 @@ impl PredictorApp {
     /// Live stats for a team (by group + code), if a sync has been done.
     pub(crate) fn live_stats(&self, group: char, code: &str) -> Option<&crate::live::LiveTeam> {
         let cc = crate::live::canonical_code(code);
-        self.live_standings
+        self.live
+            .live_standings
             .iter()
             .find(|s| s.group == group)?
             .teams
@@ -489,8 +158,8 @@ impl PredictorApp {
         self.show_standings = state.show_standings;
         self.dark = state.dark;
         self.tutorial_seen = state.tutorial_seen;
-        self.live_mode = false;
-        self.live_rx = None; // drop any in-flight sync
+        self.live.live_mode = false;
+        self.live.live_rx = None; // drop any in-flight sync
     }
 
     fn write_snapshot(&self, path: &std::path::Path) -> Result<(), String> {
@@ -687,12 +356,21 @@ impl eframe::App for PredictorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_live();
 
+        // Keep repainting while a sync is in flight so the spinner animates and
+        // poll_live picks up the result promptly.
+        if self.live.live_rx.is_some() {
+            ctx.request_repaint();
+        }
+
         // Live mode: poll scores about once a minute.
-        if self.live_mode {
+        if self.live.live_mode {
             ctx.request_repaint_after(Duration::from_secs(1));
-            let due = self.last_poll.is_none_or(|t| t.elapsed().as_secs() >= 20);
-            if due && self.live_rx.is_none() {
-                self.last_poll = Some(Instant::now());
+            let due = self
+                .live
+                .last_poll
+                .is_none_or(|t| t.elapsed().as_secs() >= 20);
+            if due && self.live.live_rx.is_none() {
+                self.live.last_poll = Some(Instant::now());
                 self.start_live_sync(ctx.clone(), "auto");
             }
         }
@@ -791,7 +469,7 @@ impl eframe::App for PredictorApp {
                         .on_hover_text("Pull real standings from football-data.org")
                         .clicked()
                     {
-                        self.show_live = !self.show_live;
+                        self.live.show_live = !self.live.show_live;
                     }
                     if ui
                         .add(
@@ -1000,16 +678,4 @@ impl eframe::App for PredictorApp {
         crate::live::toasts_overlay(self, ctx);
         crate::tutorial::run(self, ctx);
     }
-}
-
-/// Format a 1-based position as an ordinal (1st, 2nd, 3rd, 4th…).
-fn ordinal(n: u32) -> String {
-    let suffix = match (n % 10, n % 100) {
-        (1, 11) | (2, 12) | (3, 13) => "th",
-        (1, _) => "st",
-        (2, _) => "nd",
-        (3, _) => "rd",
-        _ => "th",
-    };
-    format!("{n}{suffix}")
 }

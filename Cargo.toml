@@ -19,9 +19,9 @@ name = "fifa_team3"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 dirs = "6.0.0"
 eframe = "0.31"
-egui_extras = { version = "0.31", features = ["svg"] }
+egui_extras = { version = "0.31", features = ["image"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.17.2"
-rodio = "0.22.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 ureq = { version = "3.3.0", features = ["json"] }

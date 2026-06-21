@@ -1,7 +1,64 @@
-//! Country flag SVGs embedded at compile time (from the flag-icons project),
-//! keyed by 3-letter team code. Source: https://github.com/lipis/flag-icons (MIT).
+//! Country flags embedded at compile time, keyed by 3-letter team code.
+//! PNGs are used in-app (egui image loader); SVGs in the printed HTML export.
+//! Source: https://github.com/lipis/flag-icons (MIT).
 
-/// The embedded SVG bytes for a team code, e.g. `MEX` -> Mexico's flag.
+/// Rasterized PNG bytes for a team code (for in-app rendering).
+pub(crate) fn flag_png(code: &str) -> Option<&'static [u8]> {
+    let bytes: &'static [u8] = match code {
+        "ALG" => include_bytes!("../assets/flags/ALG.png"),
+        "ARG" => include_bytes!("../assets/flags/ARG.png"),
+        "AUS" => include_bytes!("../assets/flags/AUS.png"),
+        "AUT" => include_bytes!("../assets/flags/AUT.png"),
+        "BEL" => include_bytes!("../assets/flags/BEL.png"),
+        "BIH" => include_bytes!("../assets/flags/BIH.png"),
+        "BRA" => include_bytes!("../assets/flags/BRA.png"),
+        "CAN" => include_bytes!("../assets/flags/CAN.png"),
+        "CIV" => include_bytes!("../assets/flags/CIV.png"),
+        "COD" => include_bytes!("../assets/flags/COD.png"),
+        "COL" => include_bytes!("../assets/flags/COL.png"),
+        "CPV" => include_bytes!("../assets/flags/CPV.png"),
+        "CRO" => include_bytes!("../assets/flags/CRO.png"),
+        "CUW" => include_bytes!("../assets/flags/CUW.png"),
+        "CZE" => include_bytes!("../assets/flags/CZE.png"),
+        "ECU" => include_bytes!("../assets/flags/ECU.png"),
+        "EGY" => include_bytes!("../assets/flags/EGY.png"),
+        "ENG" => include_bytes!("../assets/flags/ENG.png"),
+        "ESP" => include_bytes!("../assets/flags/ESP.png"),
+        "FRA" => include_bytes!("../assets/flags/FRA.png"),
+        "GER" => include_bytes!("../assets/flags/GER.png"),
+        "GHA" => include_bytes!("../assets/flags/GHA.png"),
+        "HAI" => include_bytes!("../assets/flags/HAI.png"),
+        "IRN" => include_bytes!("../assets/flags/IRN.png"),
+        "IRQ" => include_bytes!("../assets/flags/IRQ.png"),
+        "JOR" => include_bytes!("../assets/flags/JOR.png"),
+        "JPN" => include_bytes!("../assets/flags/JPN.png"),
+        "KOR" => include_bytes!("../assets/flags/KOR.png"),
+        "KSA" => include_bytes!("../assets/flags/KSA.png"),
+        "MAR" => include_bytes!("../assets/flags/MAR.png"),
+        "MEX" => include_bytes!("../assets/flags/MEX.png"),
+        "NED" => include_bytes!("../assets/flags/NED.png"),
+        "NOR" => include_bytes!("../assets/flags/NOR.png"),
+        "NZL" => include_bytes!("../assets/flags/NZL.png"),
+        "PAN" => include_bytes!("../assets/flags/PAN.png"),
+        "PAR" => include_bytes!("../assets/flags/PAR.png"),
+        "POR" => include_bytes!("../assets/flags/POR.png"),
+        "QAT" => include_bytes!("../assets/flags/QAT.png"),
+        "RSA" => include_bytes!("../assets/flags/RSA.png"),
+        "SCO" => include_bytes!("../assets/flags/SCO.png"),
+        "SEN" => include_bytes!("../assets/flags/SEN.png"),
+        "SUI" => include_bytes!("../assets/flags/SUI.png"),
+        "SWE" => include_bytes!("../assets/flags/SWE.png"),
+        "TUN" => include_bytes!("../assets/flags/TUN.png"),
+        "TUR" => include_bytes!("../assets/flags/TUR.png"),
+        "URU" => include_bytes!("../assets/flags/URU.png"),
+        "USA" => include_bytes!("../assets/flags/USA.png"),
+        "UZB" => include_bytes!("../assets/flags/UZB.png"),
+        _ => return None,
+    };
+    Some(bytes)
+}
+
+/// SVG bytes for a team code (for the printed HTML, rendered by the browser).
 pub(crate) fn flag_svg(code: &str) -> Option<&'static [u8]> {
     let bytes: &'static [u8] = match code {
         "ALG" => include_bytes!("../assets/flags/ALG.svg"),

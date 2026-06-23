@@ -33,6 +33,9 @@ pub(crate) struct LiveState {
     pub(crate) clinched: HashMap<String, u32>,
     /// Per 3rd-place team: clinch/elimination flags + simulated advance odds.
     pub(crate) third_outlook: HashMap<String, ThirdOutlook>,
+    /// Winner-slot ("1A") → team code → P(that team is this slot's R32 third-place
+    /// opponent), simulated through the Annex. Drives the bracket's 3rd-slot %.
+    pub(crate) third_slot_pct: HashMap<String, HashMap<String, f32>>,
     /// Qualification scenarios, computed lazily when a group is expanded and
     /// cached until the next sync — so a sync never brute-forces all 12 groups.
     pub(crate) scenario_cache: HashMap<char, GroupScenarios>,
@@ -61,6 +64,7 @@ impl Default for LiveState {
             third_delta: HashMap::new(),
             clinched: HashMap::new(),
             third_outlook: HashMap::new(),
+            third_slot_pct: HashMap::new(),
             scenario_cache: HashMap::new(),
             toasts: Vec::new(),
             today_fixtures: Vec::new(),

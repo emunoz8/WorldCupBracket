@@ -57,7 +57,11 @@ pub(crate) fn live_center_window(app: &mut PredictorApp, ctx: &egui::Context) {
     let fixtures = app.live.today_fixtures.clone();
     // Standings are finished-only; this grid is the in-play "what-if" projection,
     // with arrows comparing the projection back to the finished standings.
-    let proj = project_standings(&app.live.live_standings, &app.live.today_fixtures);
+    let proj = project_standings(
+        &app.live.live_standings,
+        &app.live.today_fixtures,
+        &app.live.remaining,
+    );
     // Rank the 3rd-place teams off the *projection* so the table tracks in-play
     // scores (matching the "possible final standings" grid), not just finished games.
     let proj_third = third_place_ranking(&proj);
@@ -618,25 +622,6 @@ pub(crate) fn live_window(app: &mut PredictorApp, ctx: &egui::Context) {
                 ui.add_space(8.0);
                 ui.label(RichText::new(status).size(12.0).color(pal.dim));
             }
-
-            // API call log.
-            ui.add_space(8.0);
-            ui.separator();
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("API log").size(12.0).strong().color(pal.text));
-                if ui.button(RichText::new("clear").size(10.0)).clicked() {
-                    app.live.api_log.clear();
-                }
-            });
-            egui::ScrollArea::vertical()
-                .max_height(160.0)
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for line in &app.live.api_log {
-                        ui.label(RichText::new(line).size(10.5).monospace().color(pal.dim));
-                    }
-                });
         });
 
     if !open {

@@ -10,6 +10,17 @@ use crate::app::PredictorApp;
 impl PredictorApp {
     /// Append a timestamped line to the API log (keeping the last ~120).
     fn log_line(&mut self, line: String) {
+        // Troubleshooting hook: uncomment to mirror the API log to a `.txt` file
+        // on disk (path from `settings::log_path()`), so it can be read/copied
+        // outside the app when diagnosing live-feed issues (e.g. code mismatches).
+        // use std::io::Write;
+        // let path = crate::settings::log_path();
+        // if let Some(dir) = path.parent() {
+        //     let _ = std::fs::create_dir_all(dir);
+        // }
+        // if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        //     let _ = writeln!(f, "{line}");
+        // }
         self.live.api_log.push(line);
         let len = self.live.api_log.len();
         if len > 120 {
@@ -88,10 +99,21 @@ impl PredictorApp {
         // Goal alerts: compare each live fixture's score to the previous poll.
         self.detect_goals();
 
-        // Stickiness: football-data can briefly un-report a just-finished match,
-        // which would drop a team's points and oscillate the order. Never let a
-        // team's played-count go down vs the previous poll — keep the fuller stats.
+        // Stickiness: football-data can briefly un-report a just-finished match
+        // (a poll comes back with 38 games instead of 39), which would drop a
+        // team's points and oscillate the order. Never let a team's played-count
+        // go down vs the previous poll — keep the fuller stats. This also preserves
+        // the last-good table through a full FD outage. Exempt a team currently in
+        // a LIVE game: it *should* drop back to its pre-game baseline (its live game
+        // is excluded from the standings on purpose, shown only in the projection).
         let mut standings = standings;
+        let playing: std::collections::HashSet<&str> = self
+            .live
+            .today_fixtures
+            .iter()
+            .filter(|f| f.status.is_live())
+            .flat_map(|f| [f.home_code.as_str(), f.away_code.as_str()])
+            .collect();
         let prev: HashMap<&str, &crate::live::LiveTeam> = self
             .live
             .live_standings
@@ -102,6 +124,7 @@ impl PredictorApp {
             for t in &mut s.teams {
                 if let Some(old) = prev.get(t.code.as_str())
                     && old.played > t.played
+                    && !playing.contains(t.code.as_str())
                 {
                     *t = (*old).clone();
                 }
@@ -122,8 +145,11 @@ impl PredictorApp {
         // groups that have kicked off are touched; un-started ones keep the user's
         // predicted order. (With live off, groups are never touched.)
         if self.live.live_mode {
-            let projection =
-                crate::live::project_standings(&standings, &self.live.today_fixtures);
+            let projection = crate::live::project_standings(
+                &standings,
+                &self.live.today_fixtures,
+                &self.live.remaining,
+            );
             for s in &projection {
                 if !s.teams.iter().any(|t| t.played > 0) {
                     continue;
@@ -138,10 +164,70 @@ impl PredictorApp {
         }
 
         let applied = standings.len();
-        self.live.third_rank = crate::live::third_place_ranking(&standings);
+        // Rank the 3rd-place race and its advance odds off the *projected* table
+        // (finished results + any in-play scores) — the exact same basis the Live
+        // Center's 3rd-place table is built on. If the odds were simulated from the
+        // finished-only standings instead (with the in-play game still a random
+        // "remaining" fixture), the Adv% would disagree with the row it sits next to
+        // and flicker as the live score crosses a goal-difference boundary. The
+        // in-play games are baked into the projection, so they're no longer
+        // "remaining" for the simulation. Clinch flags stay on the *real* standings:
+        // projecting bumps played-counts and would falsely lock an in-play game.
+        let projected = crate::live::project_standings(
+            &standings,
+            &self.live.today_fixtures,
+            &self.live.remaining,
+        );
+        let live_pairs: std::collections::HashSet<(&str, &str)> = self
+            .live
+            .today_fixtures
+            .iter()
+            .filter(|f| f.status.is_live())
+            .map(|f| (f.home_code.as_str(), f.away_code.as_str()))
+            .collect();
+        let remaining_to_play: Vec<crate::live::GroupFixture> = self
+            .live
+            .remaining
+            .iter()
+            .filter(|r| !live_pairs.contains(&(r.home.as_str(), r.away.as_str())))
+            .cloned()
+            .collect();
+        self.live.third_rank = crate::live::third_place_ranking(&projected);
         self.live.clinched = crate::live::clinched_positions(&standings);
         self.live.third_outlook =
-            crate::live::third_place_outlook(&standings, &self.live.remaining);
+            crate::live::third_place_outlook(&projected, &remaining_to_play);
+        self.live.third_slot_pct =
+            crate::live::third_slot_pct(&projected, &remaining_to_play, &self.annex);
+
+        // Live mode: mirror the projected top-8 third-place race into each group's
+        // bracket status, so the R32 third-place slots re-slot (via the annex
+        // lookup in `fifa_team3`) whenever the set of advancing thirds changes.
+        // Only groups that have kicked off are driven; un-started groups keep the
+        // user's manual pick. (With live off, statuses are never touched.)
+        if self.live.live_mode {
+            let started: std::collections::HashSet<char> = projected
+                .iter()
+                .filter(|s| s.teams.iter().any(|t| t.played > 0))
+                .map(|s| s.group)
+                .collect();
+            let updates: Vec<(char, bool)> = self
+                .live
+                .third_rank
+                .iter()
+                .filter(|r| started.contains(&r.group))
+                .map(|r| (r.group, r.advances))
+                .collect();
+            for (group, advances) in updates {
+                if let Some(g) = self.groups.iter_mut().find(|g| g.group == group) {
+                    g.third_place_status = if advances {
+                        fifa_team3::ThirdPlaceStatus::Advanced
+                    } else {
+                        fifa_team3::ThirdPlaceStatus::Eliminated
+                    };
+                }
+            }
+        }
+
         // Drop cached scenarios; each group is recomputed lazily when expanded.
         self.live.scenario_cache.clear();
         self.live.live_standings = standings;

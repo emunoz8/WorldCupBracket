@@ -96,13 +96,33 @@ pub(crate) fn sort_standings(standings: &mut [LiveStanding]) {
 /// Apply in-progress (LIVE) scores onto a copy of the standings and re-sort —
 /// the "possible new positions". Used only for the projection window; the main
 /// panel stays feed-driven to avoid any double-count.
+///
+/// Only a live game still listed in `remaining` is applied. A game one feed has
+/// already folded into the standings (a just-finished result, or one that briefly
+/// flapped to "post" and was locked in by the played-count stickiness guard) is
+/// dropped from `remaining` — projecting it again would count it twice, inflating
+/// that team's points and goals.
 pub(crate) fn project_standings(
     base: &[LiveStanding],
     fixtures: &[LiveFixture],
+    remaining: &[GroupFixture],
 ) -> Vec<LiveStanding> {
+    let pending: std::collections::HashSet<[&str; 2]> = remaining
+        .iter()
+        .map(|r| {
+            let mut p = [r.home.as_str(), r.away.as_str()];
+            p.sort_unstable();
+            p
+        })
+        .collect();
     let mut proj = base.to_vec();
     for f in fixtures.iter().filter(|f| f.status.is_live()) {
         let Some((h, a)) = f.score else { continue };
+        let mut pair = [f.home_code.as_str(), f.away_code.as_str()];
+        pair.sort_unstable();
+        if !pending.contains(&pair) {
+            continue;
+        }
         for s in &mut proj {
             for t in &mut s.teams {
                 let (scored, conceded, win) = if t.code == f.home_code {
@@ -239,6 +259,57 @@ mod tests {
         assert_eq!(c.len(), 4);
         assert_eq!(c.get("AAA"), Some(&1));
         assert_eq!(c.get("DDD"), Some(&4));
+    }
+
+    fn live_fx(home: &str, away: &str, h: i64, a: i64) -> LiveFixture {
+        LiveFixture {
+            home: home.to_string(),
+            away: away.to_string(),
+            home_code: home.to_string(),
+            away_code: away.to_string(),
+            status: MatchStatus::Live,
+            score: Some((h, a)),
+        }
+    }
+
+    fn gfx(home: &str, away: &str) -> GroupFixture {
+        GroupFixture {
+            home: home.to_string(),
+            away: away.to_string(),
+        }
+    }
+
+    #[test]
+    fn project_applies_a_live_game_still_remaining() {
+        // CPV 1pt baseline; a live 1-1 draw vs URU that is still a remaining game.
+        let base = vec![LiveStanding {
+            group: 'H',
+            teams: vec![
+                team_p("CPV", 1, 1, 0, 1, 1),
+                team_p("URU", 2, 1, 0, 1, 1),
+            ],
+        }];
+        let proj = project_standings(&base, &[live_fx("CPV", "URU", 1, 1)], &[gfx("CPV", "URU")]);
+        let cpv = proj[0].teams.iter().find(|t| t.code == "CPV").unwrap();
+        // Draw applied exactly once: played 1→2, +1 pt, +1 GF, +1 GA.
+        assert_eq!((cpv.played, cpv.points, cpv.goals_for, cpv.goals_against), (2, 2, 2, 2));
+    }
+
+    #[test]
+    fn project_skips_a_live_game_already_folded_into_standings() {
+        // The CPV-URU draw is already counted in the baseline (played 2, 2 pts) and
+        // is no longer "remaining". A stale LIVE fixture for it must NOT be re-applied.
+        let base = vec![LiveStanding {
+            group: 'H',
+            teams: vec![
+                team_p("CPV", 1, 2, 0, 2, 2),
+                team_p("URU", 2, 2, 0, 2, 2),
+            ],
+        }];
+        // Empty remaining: the game has been folded in, so projection is a no-op.
+        let proj = project_standings(&base, &[live_fx("CPV", "URU", 1, 1)], &[]);
+        let cpv = proj[0].teams.iter().find(|t| t.code == "CPV").unwrap();
+        assert_eq!((cpv.played, cpv.points, cpv.goals_for, cpv.goals_against), (2, 2, 2, 2));
     }
 
     #[test]

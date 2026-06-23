@@ -409,6 +409,76 @@ fn third_place_pct(
         .collect()
 }
 
+/// Monte-Carlo probability that a specific team is a given group winner's R32
+/// third-place opponent — i.e. P(team T fills winner-slot S's "3rd" slot). Each
+/// sim rolls the remaining games, ranks the thirds, takes the top 8, looks the
+/// resulting qualifying combination up in the Annex (which maps every winner slot
+/// to a group's third for that combination), and tallies which team filled each
+/// slot. Returns winner_slot ("1A") → team_code → probability (0.0..=1.0).
+///
+/// This is the joint probability the bracket needs (the team must finish 3rd, be
+/// top-8, *and* the annex must route its group to this slot) — distinct from the
+/// plain advance odds in [`third_place_outlook`].
+pub(crate) fn third_slot_pct(
+    standings: &[LiveStanding],
+    remaining: &[GroupFixture],
+    annex: &fifa_team3::Annex,
+) -> HashMap<String, HashMap<String, f32>> {
+    const SIMS: u32 = 4000;
+    let rems: Vec<(&LiveStanding, Vec<GroupFixture>)> = standings
+        .iter()
+        .map(|s| (s, group_remaining(&s.teams, remaining)))
+        .collect();
+
+    let mut counts: HashMap<String, HashMap<String, u32>> = HashMap::new();
+    let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+    for _ in 0..SIMS {
+        // Each group's simulated 3rd-place team, plus the thirds to rank.
+        let mut group_third: HashMap<char, String> = HashMap::new();
+        let mut thirds: Vec<(char, Record)> = Vec::with_capacity(standings.len());
+        for (s, rem) in &rems {
+            let scores: Vec<(i64, i64)> = rem
+                .iter()
+                .map(|_| (sample_goals(&mut rng), sample_goals(&mut rng)))
+                .collect();
+            let table = final_table(&s.teams, rem, &scores);
+            if let Some((c, r)) = table.get(2) {
+                group_third.insert(s.group, c.clone());
+                thirds.push((s.group, *r));
+            }
+        }
+        // Top 8 thirds advance; the sorted set of their groups keys the Annex.
+        thirds.sort_by(|a, b| cmp_record(a.1, b.1));
+        let mut advancing: Vec<char> = thirds.iter().take(8).map(|(g, _)| *g).collect();
+        advancing.sort_unstable();
+        let key: String = advancing.into_iter().collect();
+        if let Some(alloc) = annex.get(&key) {
+            for (winner_slot, opp_key) in alloc {
+                if let Some(g) = opp_key.chars().nth(1)
+                    && let Some(team) = group_third.get(&g)
+                {
+                    *counts
+                        .entry(winner_slot.clone())
+                        .or_default()
+                        .entry(team.clone())
+                        .or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    counts
+        .into_iter()
+        .map(|(slot, teams)| {
+            let probs = teams
+                .into_iter()
+                .map(|(c, n)| (c, n as f32 / SIMS as f32))
+                .collect();
+            (slot, probs)
+        })
+        .collect()
+}
+
 /// xorshift64 step — a tiny deterministic PRNG (no external crate needed).
 fn next_rand(state: &mut u64) -> u64 {
     let mut x = *state;

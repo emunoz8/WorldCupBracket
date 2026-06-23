@@ -154,36 +154,74 @@ pub(crate) fn fetch_live(token: String) -> LiveData {
         espn_data.today
     };
 
-    // Union finished matches from both sources, deduped by the unordered matchup.
-    // football-data has the full history; ESPN supplies just-finished games it
-    // hasn't caught up on yet — so an FT result lands in the table immediately and
-    // can't be double-counted or reverted once football-data confirms it.
     let key = |m: &FinishedMatch| {
         let mut p = [m.home.clone(), m.away.clone()];
         p.sort();
         p
     };
-    let mut finished = fd_data.finished;
-    let mut seen: std::collections::HashSet<[String; 2]> = finished.iter().map(key).collect();
+    let pair = |h: &str, a: &str| {
+        let mut p = [h.to_string(), a.to_string()];
+        p.sort();
+        p
+    };
+
+    // A game ESPN currently reports as LIVE must never enter the finished table —
+    // its in-progress score belongs only to the in-play projection. Excluding live
+    // matchups also guards against a feed briefly flapping a live game to "finished"
+    // and inflating a team's goals/points in the standings.
+    let live_now: std::collections::HashSet<[String; 2]> = today
+        .iter()
+        .filter(|f| f.status.is_live())
+        .map(|f| pair(&f.home_code, &f.away_code))
+        .collect();
+
+    // Union finished matches from both sources, deduped by the unordered matchup —
+    // a single feed can also return the same match twice, so dedup the whole stream.
+    // football-data has the full history; ESPN supplies just-finished games it
+    // hasn't caught up on yet, so an FT result lands in the table immediately.
+    let mut finished: Vec<FinishedMatch> = Vec::new();
+    let mut seen: std::collections::HashSet<[String; 2]> = std::collections::HashSet::new();
     let mut from_espn = 0;
-    for m in espn_data.finished {
-        if seen.insert(key(&m)) {
-            finished.push(m);
+    for (m, is_espn) in fd_data
+        .finished
+        .into_iter()
+        .map(|m| (m, false))
+        .chain(espn_data.finished.into_iter().map(|m| (m, true)))
+    {
+        let k = key(&m);
+        if live_now.contains(&k) || !seen.insert(k) {
+            continue;
+        }
+        if is_espn {
             from_espn += 1;
         }
+        finished.push(m);
     }
     let standings = build_standings(&finished, &fd_data.discipline);
 
-    // Drop any fixture football-data still lists as upcoming but ESPN reports done.
-    let remaining: Vec<GroupFixture> = fd_data
+    // Remaining = football-data's upcoming games ESPN hasn't reported done, plus
+    // any game ESPN currently shows live (so the projection can apply its score —
+    // a game one feed marked finished while ESPN still has it live was excluded
+    // above, so it must be (re)added here or it would vanish entirely).
+    let mut remaining: Vec<GroupFixture> = fd_data
         .remaining
         .into_iter()
-        .filter(|f| {
-            let mut p = [f.home.clone(), f.away.clone()];
-            p.sort();
-            !seen.contains(&p)
-        })
+        .filter(|f| !seen.contains(&pair(&f.home, &f.away)))
         .collect();
+    for f in today.iter().filter(|f| f.status.is_live()) {
+        let g = seed_group(&f.home_code);
+        if g.is_some()
+            && g == seed_group(&f.away_code)
+            && !remaining
+                .iter()
+                .any(|r| pair(&r.home, &r.away) == pair(&f.home_code, &f.away_code))
+        {
+            remaining.push(GroupFixture {
+                home: f.home_code.clone(),
+                away: f.away_code.clone(),
+            });
+        }
+    }
 
     let mut log = fd_data.log;
     log.extend(espn_data.log);
@@ -195,6 +233,39 @@ pub(crate) fn fetch_live(token: String) -> LiveData {
         fd_data.results.len(),
         today.len()
     ));
+    // Surface any finished-match code that isn't one of our seed codes — a feed
+    // using an alternate code (e.g. URY vs URU) silently mis-credits goals and
+    // breaks matchup dedup. Add such codes to `canonical_code`'s OVERRIDES.
+    {
+        use std::collections::BTreeSet;
+        let unknown: BTreeSet<&str> = finished
+            .iter()
+            .flat_map(|m| [m.home.as_str(), m.away.as_str()])
+            .filter(|c| seed_group(c).is_none())
+            .collect();
+        if !unknown.is_empty() {
+            log.push(format!(
+                "          !! unknown finished-match codes (feed mismatch): {unknown:?}"
+            ));
+        }
+    }
+    // Per-team tally so a double-count is visible at a glance: any team with
+    // played > 3 (impossible in the group stage) is proof a match was counted twice.
+    log.push("          standings (Pld·Pts GF:GA) — flags >3 played:".to_string());
+    for s in &standings {
+        let row: Vec<String> = s
+            .teams
+            .iter()
+            .filter(|t| t.played > 0)
+            .map(|t| {
+                let warn = if t.played > 3 { "!!" } else { "" };
+                format!("{}{} {}p{} {}:{}", t.code, warn, t.played, t.points, t.goals_for, t.goals_against)
+            })
+            .collect();
+        if !row.is_empty() {
+            log.push(format!("            {}: {}", s.group, row.join("  ")));
+        }
+    }
     LiveData {
         standings,
         results: fd_data.results,
@@ -537,6 +608,9 @@ pub(crate) fn canonical_code(raw: &str) -> String {
     const OVERRIDES: &[(&str, &str)] = &[
         // (provider TLA, our seed code) — add entries here when codes disagree.
         ("KVX", "KOS"), // example: Kosovo (not in 2026, illustrative)
+        // football-data uses ISO-style codes for some teams; map to our FIFA seed.
+        ("URY", "URU"), // Uruguay
+        ("CUR", "CUW"), // Curaçao
     ];
     let up = raw.trim().to_ascii_uppercase();
     OVERRIDES

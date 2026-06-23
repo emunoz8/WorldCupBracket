@@ -18,7 +18,7 @@ use crate::standings::{group_table, info_chip, third_place_chip};
 use crate::theme::{COLOR_ACCENT, COLOR_GREEN, COLOR_RED, Palette};
 
 pub(crate) struct PredictorApp {
-    annex: Annex,
+    pub(crate) annex: Annex,
     pub(crate) groups: Vec<GroupState>,
     pub(crate) dragged: Option<(usize, usize)>,
     /// Row a drag is currently hovering over (group, position) — where a gap opens.
@@ -300,6 +300,22 @@ impl PredictorApp {
                     .map(|t| t.name.clone())
             })
             .unwrap_or_else(|| opponent.to_string())
+    }
+
+    /// Live probability (0..=100) that the team currently projected into a group
+    /// winner's R32 third-place slot actually lands there — P(team in this slot),
+    /// simulated through the Annex. `winner_slot` is the group-winner key ("1A");
+    /// `opponent` is the annex third key ("3C") naming the group whose third is
+    /// projected there. `None` outside live mode or before any sim has run, so the
+    /// bracket falls back to the annex option fraction.
+    pub(crate) fn third_slot_probability(&self, winner_slot: &str, opponent: &str) -> Option<f64> {
+        if !self.live.live_mode {
+            return None;
+        }
+        let group = opponent.chars().nth(1)?;
+        let code = &self.groups.iter().find(|s| s.group == group)?.teams.get(2)?.code;
+        let slot = self.live.third_slot_pct.get(winner_slot)?;
+        Some(f64::from(slot.get(code).copied().unwrap_or(0.0)) * 100.0)
     }
 
     /// Display name for one competitor of a match, following picks into earlier rounds.

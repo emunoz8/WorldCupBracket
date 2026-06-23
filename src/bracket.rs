@@ -612,11 +612,13 @@ pub(crate) fn competitor_label(
                 .get(s)
                 .and_then(|p| p.opponents.first())
                 .map(|o| {
-                    format!(
-                        "{} ({:.0}%)",
-                        app.third_place_team(&o.opponent),
-                        o.percentage
-                    )
+                    // In live mode, show P(this team lands in *this* slot) —
+                    // simulated through the Annex (sub-100% until decided). Off
+                    // live, fall back to the annex option fraction.
+                    let pct = app
+                        .third_slot_probability(s, &o.opponent)
+                        .unwrap_or(o.percentage);
+                    format!("{} ({:.0}%)", app.third_place_team(&o.opponent), pct)
                 })
                 .unwrap_or_else(|| "3rd place TBD".to_string())
         } else {

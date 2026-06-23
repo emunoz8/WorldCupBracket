@@ -16,6 +16,17 @@ pub(crate) fn save_path() -> PathBuf {
     }
 }
 
+/// Where the live API debug log is mirrored to disk, so it can be read/copied
+/// outside the app. Same dir as the save; falls back to `data/`. Retained for the
+/// troubleshooting hook in `sync::log_line` (disabled by default).
+#[allow(dead_code)]
+pub(crate) fn log_path() -> PathBuf {
+    match dirs::config_dir() {
+        Some(dir) => dir.join(crate::APP_NAME).join("api_log.txt"),
+        None => PathBuf::from("data/api_log.txt"),
+    }
+}
+
 /// Directory holding the user's named save files (one `<name>.json` each).
 pub(crate) fn saves_dir() -> PathBuf {
     match dirs::config_dir() {

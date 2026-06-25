@@ -632,7 +632,7 @@ pub(crate) fn live_window(app: &mut PredictorApp, ctx: &egui::Context) {
 /// The cross-group 3rd-place ranking, with a cutoff line after the top 8.
 fn third_place_table(
     ui: &mut egui::Ui,
-    app: &PredictorApp,
+    app: &mut PredictorApp,
     ranks: &[crate::live::ThirdPlaceRank],
     pal: Palette,
 ) {
@@ -662,6 +662,11 @@ fn third_place_table(
         });
     });
     ui.add_space(2.0);
+
+    // Routing map is cloned so the row loop can both read it and toggle the
+    // expansion set on `app` without fighting the borrow checker.
+    let routing = app.live.third_routing.clone();
+    let mut toggles: Vec<String> = Vec::new();
 
     for (i, r) in ranks.iter().enumerate() {
         if i == 8 {
@@ -720,7 +725,24 @@ fn third_place_table(
             } else if outlook.clinched {
                 name = name.color(COLOR_GREEN);
             }
-            ui.add_sized([120.0, 16.0], egui::Label::new(name));
+            let expanded = app.live.expanded_thirds.contains(&r.code);
+            let caret = if expanded { "▾" } else { "▸" };
+            let c = ui.add_sized(
+                [10.0, 16.0],
+                egui::Label::new(RichText::new(caret).size(10.0).color(pal.dim))
+                    .sense(Sense::click()),
+            );
+            let n = ui.add_sized(
+                [104.0, 16.0],
+                egui::Label::new(name).sense(Sense::click()),
+            );
+            if c
+                .union(n)
+                .on_hover_text("Show Round-of-32 routing — which game this third lands in")
+                .clicked()
+            {
+                toggles.push(r.code.clone());
+            }
             // Advance probability + a guaranteed IN / OUT tag.
             let (tag, tag_col) = if outlook.clinched {
                 ("IN", COLOR_GREEN)
@@ -781,5 +803,96 @@ fn third_place_table(
                 );
             });
         });
+
+        // Expanded routing detail: where this group's third lands in the R32.
+        if app.live.expanded_thirds.contains(&r.code) {
+            if let Some(gr) = routing.get(&r.group) {
+                third_routing_detail(ui, gr, pal);
+            }
+        }
     }
+
+    // Apply expansion toggles after the row loop (mutable borrow released here).
+    for code in toggles {
+        if !app.live.expanded_thirds.remove(&code) {
+            app.live.expanded_thirds.insert(code);
+        }
+    }
+}
+
+/// The indented "what needs to happen" block under an expanded 3rd-place row:
+/// the destination if results hold, then every reachable R32 match (or
+/// elimination) with its probability and the qualifying set that produces it.
+fn third_routing_detail(
+    ui: &mut egui::Ui,
+    gr: &crate::live::GroupRouting,
+    pal: Palette,
+) {
+    let spaced = |key: &str| {
+        key.chars().map(|c| c.to_string()).collect::<Vec<_>>().join(" ")
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(40.0);
+        ui.vertical(|ui| {
+            ui.add_space(2.0);
+            // Headline — the "if results hold" destination.
+            let hold = match &gr.if_hold {
+                Some(d) => format!("If results hold → Match {} · vs {}", d.match_number.unwrap_or(0), d.opponent),
+                None => "If results hold → eliminated (no top-8 slot)".to_string(),
+            };
+            ui.label(RichText::new(hold).size(11.0).strong().color(pal.text));
+
+            // Every reachable destination, with the qualifying set behind it.
+            for d in gr.dests.iter().filter(|d| d.pct >= 0.005) {
+                let pct = (d.pct * 100.0).round() as i32;
+                let (line, col) = match d.match_number {
+                    Some(m) => (format!("Match {m} · vs {}", d.opponent), pal.text),
+                    None => ("Eliminated".to_string(), COLOR_RED),
+                };
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.add_sized(
+                        [38.0, 15.0],
+                        egui::Label::new(
+                            RichText::new(format!("{pct}%")).size(11.0).strong().monospace().color(col),
+                        ),
+                    );
+                    ui.label(RichText::new(line).size(11.0).color(col));
+                    if d.match_number.is_some() && !d.thirds_key.is_empty() {
+                        let needs = routing_needs(&gr.hold_key, &d.thirds_key);
+                        ui.label(
+                            RichText::new(format!("· top-8 thirds {}{}", spaced(&d.thirds_key), needs))
+                                .size(10.0)
+                                .color(pal.dim),
+                        );
+                    }
+                });
+            }
+            ui.add_space(3.0);
+        });
+    });
+}
+
+/// A short delta hint vs the "if results hold" set, e.g. " (+H −I)". Empty when
+/// this destination's qualifying set is the current projected one.
+fn routing_needs(hold_key: &str, dest_key: &str) -> String {
+    let added: String = dest_key.chars().filter(|c| !hold_key.contains(*c)).collect();
+    let removed: String = hold_key.chars().filter(|c| !dest_key.contains(*c)).collect();
+    if added.is_empty() && removed.is_empty() {
+        return String::new();
+    }
+    let mut s = String::from(" (");
+    if !added.is_empty() {
+        s.push('+');
+        s.push_str(&added.chars().map(|c| c.to_string()).collect::<Vec<_>>().join(""));
+    }
+    if !removed.is_empty() {
+        if !added.is_empty() {
+            s.push(' ');
+        }
+        s.push('−');
+        s.push_str(&removed);
+    }
+    s.push(')');
+    s
 }

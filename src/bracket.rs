@@ -385,9 +385,103 @@ fn draw_ko_match(
     if top_response.clicked() {
         clicks.push((km.match_number, Side::Left));
     }
-    if bot_response.clicked() {
+
+    // Kebab on the 3rd-place (right) row: a popup listing every team that could
+    // land in this slot with its live probability. Swallows the row's pick click
+    // so opening the menu never also flips the winner.
+    let mut kebab_hit = false;
+    if app.live.live_mode
+        && km.right == fifa_team3::Slot::ThirdPlace
+        && let fifa_team3::Slot::Group(ws) = km.left
+    {
+        kebab_hit = third_slot_kebab(ui, painter, app, km, ws, bot_rect, pal);
+    }
+    if bot_response.clicked() && !kebab_hit {
         clicks.push((km.match_number, Side::Right));
     }
+}
+
+/// Draws a "⋮" affordance on an R32 third-place row and, when clicked, a popup of
+/// every team that could fill the slot with its simulated probability (from
+/// `third_slot_pct`). Returns true if the kebab itself was clicked this frame.
+fn third_slot_kebab(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    app: &PredictorApp,
+    km: &KoMatch,
+    winner_slot: &str,
+    row: Rect,
+    pal: Palette,
+) -> bool {
+    let kebab_rect = Rect::from_center_size(
+        Pos2::new(row.max.x - 30.0, row.center().y),
+        Vec2::new(14.0, 18.0),
+    );
+    let resp = ui.interact(
+        kebab_rect,
+        egui::Id::new(("kebab", km.match_number)),
+        Sense::click(),
+    );
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    painter.text(
+        kebab_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "⋮",
+        egui::FontId::proportional(15.0),
+        if resp.hovered() { pal.text } else { pal.dim },
+    );
+
+    let popup_id = egui::Id::new(("kebab_popup", km.match_number));
+    if resp.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    egui::popup::popup_below_widget(
+        ui,
+        popup_id,
+        &resp,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(180.0);
+            ui.label(
+                RichText::new("Could fill this slot")
+                    .strong()
+                    .size(11.0)
+                    .color(pal.text),
+            );
+            ui.add_space(2.0);
+            let mut rows: Vec<(String, f32)> = app
+                .live
+                .third_slot_pct
+                .get(winner_slot)
+                .map(|m| m.iter().map(|(c, p)| (c.clone(), *p)).collect())
+                .unwrap_or_default();
+            rows.sort_by(|a, b| b.1.total_cmp(&a.1));
+            let shown: Vec<&(String, f32)> = rows.iter().filter(|(_, p)| *p >= 0.005).collect();
+            if shown.is_empty() {
+                ui.label(
+                    RichText::new("No live projection yet")
+                        .size(10.0)
+                        .color(pal.dim),
+                );
+            }
+            for (code, p) in shown {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(
+                        RichText::new(format!("{:>3.0}%", p * 100.0))
+                            .monospace()
+                            .strong()
+                            .size(11.0)
+                            .color(pal.text),
+                    );
+                    ui.label(RichText::new(app.team_name(code)).size(11.0).color(pal.text));
+                });
+            }
+        },
+    );
+    resp.clicked()
 }
 
 #[allow(clippy::too_many_arguments)]

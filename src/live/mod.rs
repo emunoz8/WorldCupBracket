@@ -36,6 +36,12 @@ pub(crate) struct LiveState {
     /// Winner-slot ("1A") → team code → P(that team is this slot's R32 third-place
     /// opponent), simulated through the Annex. Drives the bracket's 3rd-slot %.
     pub(crate) third_slot_pct: HashMap<String, HashMap<String, f32>>,
+    /// Per group: where its third-place team lands in the R32, by scenario —
+    /// "if results hold" plus the full destination distribution. Powers the
+    /// expandable routing detail under each 3rd-place row.
+    pub(crate) third_routing: HashMap<char, GroupRouting>,
+    /// 3rd-place rows the user has expanded to see routing detail (by team code).
+    pub(crate) expanded_thirds: std::collections::HashSet<String>,
     /// Qualification scenarios, computed lazily when a group is expanded and
     /// cached until the next sync — so a sync never brute-forces all 12 groups.
     pub(crate) scenario_cache: HashMap<char, GroupScenarios>,
@@ -65,6 +71,8 @@ impl Default for LiveState {
             clinched: HashMap::new(),
             third_outlook: HashMap::new(),
             third_slot_pct: HashMap::new(),
+            third_routing: HashMap::new(),
+            expanded_thirds: std::collections::HashSet::new(),
             scenario_cache: HashMap::new(),
             toasts: Vec::new(),
             today_fixtures: Vec::new(),

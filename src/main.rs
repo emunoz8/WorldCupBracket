@@ -24,10 +24,12 @@ pub(crate) const APP_NAME: &str = "WC26_Bracket";
 
 fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
+        persist_window: false,
         viewport: egui::ViewportBuilder::default()
             .with_title(APP_NAME)
             .with_inner_size([1280.0, 820.0])
             .with_min_inner_size([900.0, 600.0])
+            .with_position([100.0, 100.0])
             .with_icon(std::sync::Arc::new(app_icon())),
         ..Default::default()
     };

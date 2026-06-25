@@ -198,6 +198,8 @@ impl PredictorApp {
             crate::live::third_place_outlook(&projected, &remaining_to_play);
         self.live.third_slot_pct =
             crate::live::third_slot_pct(&projected, &remaining_to_play, &self.annex);
+        self.live.third_routing =
+            crate::live::third_routing(&projected, &remaining_to_play, &self.annex);
 
         // Live mode: mirror the projected top-8 third-place race into each group's
         // bracket status, so the R32 third-place slots re-slot (via the annex
@@ -249,10 +251,24 @@ impl PredictorApp {
         let baseline = self.live.prev_group_points.is_empty();
         let mut events: Vec<(String, crate::live::AlertKind)> = Vec::new();
 
+        // Teams in a LIVE game: their points/3rd-place position flicker as the feed
+        // folds the in-play result in and out between polls. That isn't a real
+        // event, so never alert on them — they alert once when the match goes Final.
+        let live_now: std::collections::HashSet<&str> = self
+            .live
+            .today_fixtures
+            .iter()
+            .filter(|f| f.status.is_live())
+            .flat_map(|f| [f.home_code.as_str(), f.away_code.as_str()])
+            .collect();
+
         if !baseline {
             // A team's points went up → it just won or drew a match.
             for s in &self.live.live_standings {
                 for t in &s.teams {
+                    if live_now.contains(t.code.as_str()) {
+                        continue;
+                    }
                     if let Some(&old) = self.live.prev_group_points.get(&t.code)
                         && t.points > old
                     {
@@ -270,6 +286,9 @@ impl PredictorApp {
             }
             // A 3rd-place team crossed the top-8 line (advancing ↔ eliminated).
             for (i, r) in self.live.third_rank.iter().enumerate() {
+                if live_now.contains(r.code.as_str()) {
+                    continue;
+                }
                 if let Some(&old) = self.live.prev_third.get(&r.code) {
                     let was_in = old < 8;
                     let now_in = i < 8;

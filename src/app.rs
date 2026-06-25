@@ -119,6 +119,17 @@ impl PredictorApp {
         prediction_report(&self.annex, &passing, &eliminated)
     }
 
+    /// A team's display name from its 3-letter code (canonicalised), falling back
+    /// to the code itself for anything unseeded.
+    pub(crate) fn team_name(&self, code: &str) -> String {
+        let cc = crate::live::canonical_code(code);
+        fifa_team3::SEED_TEAMS
+            .iter()
+            .find(|(_, _, c, _)| *c == cc)
+            .map(|(_, name, ..)| name.to_string())
+            .unwrap_or_else(|| code.to_string())
+    }
+
     /// Live stats for a team (by group + code), if a sync has been done.
     pub(crate) fn live_stats(&self, group: char, code: &str) -> Option<&crate::live::LiveTeam> {
         let cc = crate::live::canonical_code(code);

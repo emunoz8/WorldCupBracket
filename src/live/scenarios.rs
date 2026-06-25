@@ -377,7 +377,7 @@ fn third_place_pct(
         for (s, rem) in &rems {
             let scores: Vec<(i64, i64)> = rem
                 .iter()
-                .map(|_| (sample_goals(&mut rng), sample_goals(&mut rng)))
+                .map(|f| sample_match(&mut rng, &f.home, &f.away))
                 .collect();
             let table = final_table(&s.teams, rem, &scores);
             if let Some((c, _)) = table.first() {
@@ -439,7 +439,7 @@ pub(crate) fn third_slot_pct(
         for (s, rem) in &rems {
             let scores: Vec<(i64, i64)> = rem
                 .iter()
-                .map(|_| (sample_goals(&mut rng), sample_goals(&mut rng)))
+                .map(|f| sample_match(&mut rng, &f.home, &f.away))
                 .collect();
             let table = final_table(&s.teams, rem, &scores);
             if let Some((c, r)) = table.get(2) {
@@ -479,6 +479,182 @@ pub(crate) fn third_slot_pct(
         .collect()
 }
 
+/// One reachable Round-of-32 destination for a group's third-place team.
+#[derive(Clone, Default)]
+pub(crate) struct RouteDest {
+    /// R32 match number, or `None` when the third is eliminated (no top-8 slot).
+    pub(crate) match_number: Option<usize>,
+    /// The group winner this third would face, e.g. "A1"; empty when eliminated.
+    pub(crate) opponent: String,
+    /// Simulated probability of this destination, 0.0..=1.0.
+    pub(crate) pct: f32,
+    /// The advancing-thirds groups (sorted, e.g. "ABDFGHKL") that most often route
+    /// here — the Annex key. Drives the "what needs to happen" condition text.
+    pub(crate) thirds_key: String,
+}
+
+/// A group's third-place routing outlook: where it lands in the R32, by scenario.
+#[derive(Clone, Default)]
+pub(crate) struct GroupRouting {
+    /// Destination if the current projected standings hold (None ⇒ eliminated).
+    pub(crate) if_hold: Option<RouteDest>,
+    /// The advancing-thirds set under the current projection (sorted group letters).
+    pub(crate) hold_key: String,
+    /// Every reachable destination, descending by probability.
+    pub(crate) dests: Vec<RouteDest>,
+}
+
+/// The R32 match number and the group-winner slot that an Annex allocation routes
+/// group `g`'s third to (e.g. group 'C' → (76?, 'A') when slot "1A" hosts "3C").
+fn group_dest(alloc: &fifa_team3::Allocation, g: char) -> Option<(usize, char)> {
+    let winner_slot = alloc
+        .iter()
+        .find(|(_, opp)| opp.chars().nth(1) == Some(g))
+        .map(|(slot, _)| slot.as_str())?;
+    let owner = winner_slot.chars().nth(1)?;
+    let m = fifa_team3::ROUND_OF_32_MATCHES
+        .iter()
+        .find(|bm| bm.left_slot == winner_slot && bm.right_slot == "3rd")?;
+    Some((m.match_number, owner))
+}
+
+/// The set of groups whose thirds currently rank in the top 8 (the Annex key) and,
+/// per group, where its third routes — computed from finished/projected standings
+/// with no simulation. This is the "if results hold" baseline.
+fn hold_routing(
+    standings: &[LiveStanding],
+    annex: &fifa_team3::Annex,
+) -> (String, HashMap<char, Option<(usize, char)>>) {
+    let mut thirds: Vec<(char, Record)> = standings
+        .iter()
+        .filter_map(|s| {
+            let t = final_table(&s.teams, &[], &[]);
+            t.get(2).map(|(_, r)| (s.group, *r))
+        })
+        .collect();
+    thirds.sort_by(|a, b| cmp_record(a.1, b.1));
+    let advancing: BTreeSet<char> = thirds.iter().take(8).map(|(g, _)| *g).collect();
+    let key: String = advancing.iter().collect();
+    let alloc = annex.get(&key);
+    let mut dest = HashMap::new();
+    for (g, _) in &thirds {
+        let d = if advancing.contains(g) {
+            alloc.and_then(|a| group_dest(a, *g))
+        } else {
+            None
+        };
+        dest.insert(*g, d);
+    }
+    (key, dest)
+}
+
+/// Monte-Carlo routing: for each group, the distribution over which R32 match its
+/// third-place team ends up in (or elimination), plus the "if results hold"
+/// destination. Mirrors [`third_place_pct`]'s simulation but tallies the Annex
+/// allocation each qualifying set produces, so the bracket side a third lands on
+/// gets the same scenario treatment the group stage has.
+pub(crate) fn third_routing(
+    standings: &[LiveStanding],
+    remaining: &[GroupFixture],
+    annex: &fifa_team3::Annex,
+) -> HashMap<char, GroupRouting> {
+    const SIMS: u32 = 4000;
+    let rems: Vec<(&LiveStanding, Vec<GroupFixture>)> = standings
+        .iter()
+        .map(|s| (s, group_remaining(&s.teams, remaining)))
+        .collect();
+
+    // group → destination match (None = eliminated) → (hits, key → hits).
+    type DestTally = HashMap<Option<usize>, (u32, HashMap<String, u32>)>;
+    let mut tally: HashMap<char, DestTally> = HashMap::new();
+
+    let mut rng = 0x9E37_79B9_7F4A_7C15u64;
+    for _ in 0..SIMS {
+        let mut thirds: Vec<(char, Record)> = Vec::with_capacity(standings.len());
+        for (s, rem) in &rems {
+            let scores: Vec<(i64, i64)> = rem
+                .iter()
+                .map(|f| sample_match(&mut rng, &f.home, &f.away))
+                .collect();
+            let table = final_table(&s.teams, rem, &scores);
+            if let Some((_, r)) = table.get(2) {
+                thirds.push((s.group, *r));
+            }
+        }
+        thirds.sort_by(|a, b| cmp_record(a.1, b.1));
+        let advancing: BTreeSet<char> = thirds.iter().take(8).map(|(g, _)| *g).collect();
+        let key: String = advancing.iter().collect();
+        let alloc = annex.get(&key);
+        for (g, _) in &thirds {
+            let dest = if advancing.contains(g) {
+                alloc.and_then(|a| group_dest(a, *g)).map(|(m, _)| m)
+            } else {
+                None
+            };
+            let e = tally.entry(*g).or_default().entry(dest).or_default();
+            e.0 += 1;
+            *e.1.entry(key.clone()).or_default() += 1;
+        }
+    }
+
+    let (hold_key, hold_dest) = hold_routing(standings, annex);
+    let opp_label = |owner: char| format!("{owner}1");
+
+    tally
+        .into_iter()
+        .map(|(g, dests)| {
+            let mut list: Vec<RouteDest> = dests
+                .into_iter()
+                .map(|(m, (hits, keys))| {
+                    // The most common qualifying set that produced this destination.
+                    let thirds_key = keys
+                        .into_iter()
+                        .max_by_key(|(_, n)| *n)
+                        .map(|(k, _)| k)
+                        .unwrap_or_default();
+                    // Recover the opponent label from this destination's match.
+                    let opponent = m
+                        .and_then(|num| {
+                            fifa_team3::ROUND_OF_32_MATCHES
+                                .iter()
+                                .find(|bm| bm.match_number == num)
+                        })
+                        .and_then(|bm| bm.left_slot.chars().nth(1))
+                        .map(opp_label)
+                        .unwrap_or_default();
+                    RouteDest {
+                        match_number: m,
+                        opponent,
+                        pct: hits as f32 / SIMS as f32,
+                        thirds_key,
+                    }
+                })
+                .collect();
+            list.sort_by(|a, b| b.pct.total_cmp(&a.pct));
+
+            let if_hold = hold_dest.get(&g).copied().flatten().map(|(num, owner)| RouteDest {
+                match_number: Some(num),
+                opponent: opp_label(owner),
+                pct: list
+                    .iter()
+                    .find(|d| d.match_number == Some(num))
+                    .map(|d| d.pct)
+                    .unwrap_or(0.0),
+                thirds_key: hold_key.clone(),
+            });
+
+            (
+                g,
+                GroupRouting {
+                    if_hold,
+                    hold_key: hold_key.clone(),
+                    dests: list,
+                },
+            )
+        })
+        .collect()
+}
+
 /// xorshift64 step — a tiny deterministic PRNG (no external crate needed).
 fn next_rand(state: &mut u64) -> u64 {
     let mut x = *state;
@@ -490,16 +666,47 @@ fn next_rand(state: &mut u64) -> u64 {
 }
 
 /// Sample a single team's goals from a rough World-Cup scoring distribution.
-fn sample_goals(state: &mut u64) -> i64 {
-    let r = (next_rand(state) >> 11) as f64 / (1u64 << 53) as f64; // [0,1)
-    match r {
-        x if x < 0.30 => 0,
-        x if x < 0.64 => 1,
-        x if x < 0.85 => 2,
-        x if x < 0.95 => 3,
-        x if x < 0.99 => 4,
-        _ => 5,
+/// Simulate one fixture's score, biasing the stronger (better FIFA-ranked) team.
+/// Each side's goals are Poisson with a mean nudged up/down by the rank gap, so
+/// near-equal teams trend to draws and a big rank gap favours a win for the
+/// higher-ranked side. Unknown codes are treated as weakest (sort last).
+fn sample_match(state: &mut u64, home: &str, away: &str) -> (i64, i64) {
+    let (lh, la) = rank_lambdas(home, away);
+    (sample_poisson(lh, state), sample_poisson(la, state))
+}
+
+/// Expected goals for (home, away) from their FIFA-rank gap. A symmetric log
+/// shift around a shared base: equal ranks → equal means (draw-leaning); the
+/// better-ranked side's mean rises, the weaker side's falls.
+fn rank_lambdas(home: &str, away: &str) -> (f64, f64) {
+    const BASE: f64 = 1.35; // avg goals/team across the field
+    const MAXR: f64 = 60.0; // floor for unknown/weak codes
+    const SCALE: f64 = 40.0; // rank gap that amounts to a full unit of edge
+    const K: f64 = 0.45; // how hard strength shifts scoring
+    let r = |c: &str| -> f64 {
+        let x = fifa_rank(c);
+        if x == usize::MAX { MAXR } else { (x as f64).min(MAXR) }
+    };
+    // Positive edge ⇒ home is better ranked (lower index).
+    let edge = (r(away) - r(home)) / SCALE;
+    (BASE * (K * edge).exp(), BASE * (-K * edge).exp())
+}
+
+/// Knuth's Poisson sampler driven by the local xorshift PRNG. Capped at 9 to
+/// keep a stray tail from blowing up a goal-difference tiebreak.
+fn sample_poisson(lambda: f64, state: &mut u64) -> i64 {
+    let l = (-lambda).exp();
+    let mut k = 0i64;
+    let mut p = 1.0;
+    loop {
+        k += 1;
+        let u = (next_rand(state) >> 11) as f64 / (1u64 << 53) as f64; // [0,1)
+        p *= u;
+        if p <= l {
+            break;
+        }
     }
+    (k - 1).min(9)
 }
 
 /// Position finishing stats for one (own-result, other-results) coarse cell.
@@ -961,6 +1168,48 @@ mod tests {
             home: h.to_string(),
             away: a.to_string(),
         }
+    }
+
+    #[test]
+    fn third_routing_maps_finished_groups_through_annex() {
+        // 12 finished groups; the 3rd-place team's points descend A=12 … L=1, so
+        // top-8 thirds are groups A–H. A one-key Annex routes each to an R32 slot.
+        let standings: Vec<LiveStanding> = ('A'..='L')
+            .enumerate()
+            .map(|(i, g)| LiveStanding {
+                group: g,
+                teams: vec![
+                    team_p("T1", 1, 30, 9, 9, 3),
+                    team_p("T2", 2, 20, 5, 6, 3),
+                    team_p(&format!("{g}3"), 3, (12 - i) as i64, 0, 3, 3),
+                    team_p("T4", 4, 0, -9, 0, 3),
+                ],
+            })
+            .collect();
+
+        let mut alloc: fifa_team3::Allocation = HashMap::new();
+        // Map each advancing group A–H onto one of the eight "3rd" winner slots.
+        for (g, slot) in [
+            ('A', "1E"), ('B', "1I"), ('C', "1A"), ('D', "1L"),
+            ('E', "1D"), ('F', "1G"), ('G', "1B"), ('H', "1K"),
+        ] {
+            alloc.insert(slot.to_string(), format!("3{g}"));
+        }
+        let mut annex: fifa_team3::Annex = HashMap::new();
+        annex.insert("ABCDEFGH".to_string(), alloc);
+
+        let out = third_routing(&standings, &[], &annex);
+
+        // Group A's third routes to slot "1E" → R32 match 74, facing E1.
+        let a = out[&'A'].if_hold.as_ref().unwrap();
+        assert_eq!(a.match_number, Some(74));
+        assert_eq!(a.opponent, "E1");
+        assert!((a.pct - 1.0).abs() < 1e-6); // finished groups ⇒ deterministic
+
+        // Group I is 9th ⇒ no top-8 slot ⇒ eliminated under the projection.
+        assert!(out[&'I'].if_hold.is_none());
+        let elim = out[&'I'].dests.iter().find(|d| d.match_number.is_none()).unwrap();
+        assert!((elim.pct - 1.0).abs() < 1e-6);
     }
 
     #[test]
